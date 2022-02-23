@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 from openpecha.core.ids import get_pecha_id
 from openpecha.core.layer import InitialCreationEnum, Layer, LayerEnum, PechaMetaData
 from openpecha.core.pecha import OpenPechaFS 
+from datetime import datetime
+from uuid import uuid4
 
 import requests
 
@@ -48,23 +50,32 @@ def get_links(url):
 
 
 def parse_page(url):
+    page_meta={}
+    chapter_subtitle_map = {}
     page = make_request(url)
     lang_elems = page.select('p#lang-list a')
     languages = [lang_elem.text for lang_elem in lang_elems]
     pecha_ids = get_pecha_ids(languages)
-    title = page.select_one('div#content h1').text
+    page_meta.update({
+        "main_title":page.select_one('div#content h1').text,
+        "description":page.select_one("div#content b").text
+        })
     main_div = page.find('div',{'id':'content'})
     headings = main_div.find_all('h4')
+
     for heading in headings:
-        sub_title = heading.get_text()
         chapter_elems = heading.find_next_sibling('div').select('ul > li > a')
         for chapter_elem in chapter_elems:
-            chapter = chapter_elem.text
+            chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
             href = chapter_elem['href']
             base_text = get_text(start_url+href)
             for pecha_id in pecha_ids:
                 language,pechaid = pecha_id
-                create_opf(pechaid,base_text[language],chapter)
+                create_opf(pechaid,base_text[language],chapter_elem.text)
+    page_meta.update({"chapter_subtitle":chapter_subtitle_map})
+    for pecha_id in pecha_ids:
+        lang,pechaid = pecha_id
+        create_meta(pechaid,page_meta,lang)
 
 
 def create_opf(pecha_id,base_text,chapter):
@@ -74,6 +85,36 @@ def create_opf(pecha_id,base_text,chapter):
     opf.base = bases
     opf.save_base()
 
+
+def create_meta(pecha_id,page_meta,lang):
+    opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
+    opf = OpenPechaFS(opf_path=opf_path)
+    vol_meta = get_volume_meta(page_meta['chapter_subtitle'])
+    instance_meta = PechaMetaData(
+        id=pecha_id,
+        initial_creation_type=InitialCreationEnum.input,
+        created_at=datetime.now(),
+        last_modified_at=datetime.now(),
+        source_metadata={
+            "title":page_meta['main_title'],
+            "language": lang,
+            "description":page_meta["description"],
+            "volume":vol_meta
+        })    
+
+    opf._meta = instance_meta
+    opf.save_meta()
+
+
+def get_volume_meta(chapter_subtitle):
+    meta={}
+    for chapter in chapter_subtitle:
+        meta.update({uuid4().hex:{
+            "title":chapter,
+            "parent": chapter_subtitle[chapter],
+        }}) 
+
+    return meta
 
 
 def get_text(url):
