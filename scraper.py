@@ -1,3 +1,4 @@
+from ctypes import alignment
 from email.mime import base
 from pydoc import pager
 from urllib import response
@@ -7,7 +8,8 @@ from openpecha.core.layer import InitialCreationEnum, Layer, LayerEnum, PechaMet
 from openpecha.core.pecha import OpenPechaFS 
 from datetime import datetime
 from uuid import uuid4
-
+from index import Alignment
+import re
 import requests
 
 
@@ -58,25 +60,29 @@ def parse_page(url):
     pecha_ids = get_pecha_ids(languages)
     page_meta.update({
         "main_title":page.select_one('div#content h1').text,
-        "description":page.select_one("div#content b").text
+        "description":page.select_one("div#content b").text 
         })
     main_div = page.find('div',{'id':'content'})
     headings = main_div.find_all('h4')
 
     for heading in headings:
-        chapter_elems = heading.find_next_sibling('div').select('ul > li > a')
+        if heading.get_text() == "Related Topics":
+            continue
+        chapter_elems = heading.find_next_sibling('div').select('ul > li > a:first-child')
         for chapter_elem in chapter_elems:
             chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
             href = chapter_elem['href']
             base_text = get_text(start_url+href)
             for pecha_id in pecha_ids:
                 language,pechaid = pecha_id
-                create_opf(pechaid,base_text[language],chapter_elem.text)
+                if language in base_text:
+                    create_opf(pechaid,base_text[language],chapter_elem.text)
     page_meta.update({"chapter_subtitle":chapter_subtitle_map})
     for pecha_id in pecha_ids:
         lang,pechaid = pecha_id
         create_meta(pechaid,page_meta,lang)
 
+    return pecha_ids,page.select_one('div#content h1').text
 
 def create_opf(pecha_id,base_text,chapter):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
@@ -124,16 +130,59 @@ def get_text(url):
     language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
     for language_page in language_pages:
         language,href = language_page
-        base_text.update({language:extract_page_text(start_url+href)})
+        base_text.update({language:extract_page_text(start_url+href,language)})
 
     return base_text
 
 
-def extract_page_text(url):
+def extract_page_text(url,language):
+    base_text=""
+    alignment = None
     page = make_request(url)
-    text = page.select_one('div#maintext').text
+    div_main = page.select_one('div#maintext')
+    childrens = div_main.findChildren(recursive=False)
+    #print(childrens)
+    if len(childrens) == 1 and childrens[0].name == "div":
+        childrens = childrens[0].findChildren(recursive=False)
+    for children in childrens:
+        if children.has_attr('class'):
+            if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and language != "བོད་ཡིག":
+                alignment = True
+                continue
+        text = children.get_text()
+        if text == "Bibliography":
+            break
+        elif text == "\xa0":
+            base_text+="\n"
+            continue
+        if len(text)>90:
+            text = change_text_format(text)
+        base_text+=text+"\n"
 
-    return text.strip("\n")
+    return base_text.strip("\n")
+
+def change_text_format(text):
+    base_text=""
+    prev= ""
+    text = text.replace("\n","") 
+    ranges = iter(range(len(text)))
+    for i in ranges:
+        if i<len(text)-1:
+            if i%90 == 0 and i != 0 and re.search("\s",text[i+1]):
+                base_text+=text[i]+"\n"
+            elif i%90 == 0 and i != 0 and re.search("\S",text[i+1]):
+                while i < len(text)-1 and re.search("\S",text[i+1]):
+                    base_text+=text[i]
+                    i = next(ranges) 
+                base_text+=text[i]+"\n" 
+            elif prev == "\n" and re.search("\s",text[i]):
+                continue
+            else:
+                base_text+=text[i]
+        else:
+            base_text+=text[i]
+        prev = base_text[-1]
+    return base_text[:-1] if base_text[-1] == "\n" else base_text
 
 
 def get_pecha_ids(languages):
@@ -144,16 +193,19 @@ def get_pecha_ids(languages):
 
 
 def main():
+    obj = Alignment(root_path)
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
     for link in links:
         main_title = link
         pecha_links = links[link]
         for pecha_link in pecha_links:
-            parse_page(start_url+pecha_link)
+            #pecha_ids,pecha_name = parse_page(start_url+pecha_link)
+            parse_page('https://www.lotsawahouse.org/bo/indian-masters/arya-shura/')
+            #obj.create_alignment(pecha_ids,pecha_name)
             break
         break
-
+    
 
 if __name__ == "__main__":
     main()
