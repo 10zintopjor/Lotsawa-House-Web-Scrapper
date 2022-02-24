@@ -93,10 +93,10 @@ def create_opf(pecha_id,base_text,chapter,has_alignment):
     bases= {f"{chapter}":base_text}
     opf.base = bases
     opf.save_base()
-    if False not in has_alignment:
-        layers = {f"{chapter}": {LayerEnum.segment: get_segment_layer(base_text)}}
-        opf.layers = layers
-        opf.save_layers()
+    #if False not in has_alignment:
+    layers = {f"{chapter}": {LayerEnum.segment: get_segment_layer(base_text)}}
+    opf.layers = layers
+    opf.save_layers()
 
 
 def get_segment_layer(base_text):
@@ -170,23 +170,23 @@ def extract_page_text(url,language):
     page = make_request(url)
     div_main = page.select_one('div#maintext')
     childrens = div_main.findChildren(recursive=False)
-    #print(childrens)
     if len(childrens) == 1 and childrens[0].name == "div":
         childrens = childrens[0].findChildren(recursive=False)
     for children in childrens:
+        text = children.get_text()
         if children.has_attr('class'):
             if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and language != "བོད་ཡིག":
                 has_alignment.add(True)
                 continue
-        text = children.get_text()
-        if text == "Bibliography":
+        if text in ("Bibliography","Bibliographie"):
             break
         elif text == "\xa0":
             base_text+="\n"
             continue
         if len(text)>90:
             text = change_text_format(text)
-        base_text+=text+"\n"
+        base_text+=text.strip(" ")
+        base_text+="\n\n" if True not in has_alignment else "\n"
 
     return base_text.strip("\n"),has_alignment
 
@@ -230,7 +230,7 @@ def main():
         pecha_links = links[link]
         for pecha_link in pecha_links:
             #pecha_ids,pecha_name = parse_page(start_url+pecha_link)
-            parse_page('https://www.lotsawahouse.org/bo/indian-masters/arya-shura/')
+            parse_page('https://www.lotsawahouse.org/topics/abhidharmakosha/')
             #obj.create_alignment(pecha_ids,pecha_name)
             break
         break
