@@ -6,9 +6,11 @@ from bs4 import BeautifulSoup
 from openpecha.core.ids import get_pecha_id
 from openpecha.core.layer import InitialCreationEnum, Layer, LayerEnum, PechaMetaData
 from openpecha.core.pecha import OpenPechaFS 
+from openpecha.core.annotation import AnnBase, Span
 from datetime import datetime
 from uuid import uuid4
 from index import Alignment
+
 import re
 import requests
 
@@ -72,11 +74,12 @@ def parse_page(url):
         for chapter_elem in chapter_elems:
             chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
             href = chapter_elem['href']
-            base_text = get_text(start_url+href)
+            base_text,has_alignment = get_text(start_url+href)
             for pecha_id in pecha_ids:
                 language,pechaid = pecha_id
                 if language in base_text:
-                    create_opf(pechaid,base_text[language],chapter_elem.text)
+                    chapter = chapter_elem.text
+                    create_opf(pechaid,base_text[language],chapter,has_alignment)
     page_meta.update({"chapter_subtitle":chapter_subtitle_map})
     for pecha_id in pecha_ids:
         lang,pechaid = pecha_id
@@ -84,12 +87,35 @@ def parse_page(url):
 
     return pecha_ids,page.select_one('div#content h1').text
 
-def create_opf(pecha_id,base_text,chapter):
+def create_opf(pecha_id,base_text,chapter,has_alignment):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
     opf = OpenPechaFS(opf_path=opf_path)
     bases= {f"{chapter}":base_text}
     opf.base = bases
     opf.save_base()
+    if False not in has_alignment:
+        layers = {f"{chapter}": {LayerEnum.segment: get_segment_layer(base_text)}}
+        opf.layers = layers
+        opf.save_layers()
+
+
+def get_segment_layer(base_text):
+    segment_annotations= {}
+    char_walker = 0
+    splited_texts = base_text.split("\n\n")
+    for text in splited_texts:
+        segment_annotation,end = get_segment_annotation(char_walker,text)
+        segment_annotations.update(segment_annotation)
+        char_walker += end+1
+    segment_layer = Layer(annotation_type= LayerEnum.segment,annotations=segment_annotations)   
+
+    return segment_layer   
+
+def get_segment_annotation(char_walker,text):
+
+    segment_annotation = {uuid4().hex:AnnBase(span=Span(start=char_walker, end=char_walker + len(text) - 2))}
+
+    return (segment_annotation,len(text))
 
 
 def create_meta(pecha_id,page_meta,lang):
@@ -126,18 +152,21 @@ def get_volume_meta(chapter_subtitle):
 def get_text(url):
     page = make_request(url)
     base_text = {}
+    has_alignment = set()
     lang_elems = page.select('p#lang-list a')
     language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
     for language_page in language_pages:
         language,href = language_page
-        base_text.update({language:extract_page_text(start_url+href,language)})
+        text,bool_alignment = extract_page_text(start_url+href,language)
+        has_alignment = set.union(has_alignment,bool_alignment)
+        base_text.update({language:text})
 
-    return base_text
+    return base_text,has_alignment
 
 
 def extract_page_text(url,language):
     base_text=""
-    alignment = None
+    has_alignment = set()
     page = make_request(url)
     div_main = page.select_one('div#maintext')
     childrens = div_main.findChildren(recursive=False)
@@ -147,7 +176,7 @@ def extract_page_text(url,language):
     for children in childrens:
         if children.has_attr('class'):
             if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and language != "བོད་ཡིག":
-                alignment = True
+                has_alignment.add(True)
                 continue
         text = children.get_text()
         if text == "Bibliography":
@@ -159,7 +188,7 @@ def extract_page_text(url,language):
             text = change_text_format(text)
         base_text+=text+"\n"
 
-    return base_text.strip("\n")
+    return base_text.strip("\n"),has_alignment
 
 def change_text_format(text):
     base_text=""
