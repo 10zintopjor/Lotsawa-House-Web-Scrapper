@@ -123,6 +123,7 @@ def create_meta(pecha_id,page_meta,lang):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
     opf = OpenPechaFS(opf_path=opf_path)
     vol_meta = get_volume_meta(page_meta['chapter_subtitle'])
+    lang_code = get_lang_code(lang)
     instance_meta = PechaMetaData(
         id=pecha_id,
         initial_creation_type=InitialCreationEnum.input,
@@ -130,7 +131,7 @@ def create_meta(pecha_id,page_meta,lang):
         last_modified_at=datetime.now(),
         source_metadata={
             "title":page_meta['main_title'],
-            "language": lang,
+            "language": lang_code,
             "description":page_meta["description"],
             "volume":vol_meta
         })    
@@ -158,14 +159,15 @@ def get_text(url):
     language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
     for language_page in language_pages:
         language,href = language_page
-        text,bool_alignment = extract_page_text(start_url+href,language,has_alignment)
+        lang_code = get_lang_code(language)
+        text,bool_alignment = extract_page_text(start_url+href,lang_code,has_alignment)
         has_alignment = set.union(has_alignment,bool_alignment)
-        base_text.update({language:text})
+        base_text.update({lang_code :text})
 
     return base_text,has_alignment
 
 
-def extract_page_text(url,language,has_alignment):
+def extract_page_text(url,lang_code,has_alignment):
     base_text=""
     page = make_request(url)
     div_main = page.select_one('div#maintext')
@@ -175,7 +177,7 @@ def extract_page_text(url,language,has_alignment):
     for children in childrens:
         text = children.get_text()
         if children.has_attr('class'):
-            if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and language != "བོད་ཡིག":
+            if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and lang_code != "bo":
                 has_alignment.add(True)
                 continue
         if text in ("Bibliography","Bibliographie"):
@@ -217,13 +219,35 @@ def change_text_format(text):
 def get_pecha_ids(languages):
     pecha_ids = []
     for language in languages:
-        pecha_ids.append([language,get_pecha_id()])
+        lang_code = get_lang_code(language)
+        pecha_ids.append([lang_code,get_pecha_id()])
     return pecha_ids
 
 
+def get_lang_code(lang):
+    code = ""
+    if lang == "བོད་ཡིག":
+        code = "bo"
+    elif lang == "English":
+        code = "en"
+    elif lang == "Deutsch":
+        code = "de"  
+    elif lang == "Español":
+        code = "es"
+    elif lang == "Français":
+        code = "fr"
+    elif lang == "Italiano":
+        code = "it"                 
+    elif lang == "Nederlands":
+        code = "nl"
+    else:
+        code = "un"
+
+    return code        
+
 def create_alignment(pecha_ids,pecha_name):
     obj = Alignment(root_path)
-    obj.create_alignment(pecha_ids,pecha_name)
+    alignment_id,alignmnet_vol_map = obj.create_alignment(pecha_ids,pecha_name)
 
 
 def main():

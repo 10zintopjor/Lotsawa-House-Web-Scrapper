@@ -2,6 +2,7 @@ from asyncore import read
 from ctypes import alignment
 from distutils.command.config import LANG_EXT
 from pathlib import Path
+from pydoc import source_synopsis
 from uuid import uuid4
 import os
 import logging
@@ -9,6 +10,7 @@ from openpecha.core.ids import get_alignment_id
 from openpecha.utils import dump_yaml, load_yaml
 from copy import deepcopy
 from datetime import date, datetime
+
 
 
 logging.basicConfig(
@@ -24,26 +26,28 @@ class Alignment:
     def create_alignment_yml(self,pecha_ids,volume):
         self.seg_pairs = self.get_segment_pairs(pecha_ids,volume)
         self.segment_sources = {}
+        language = []
         for pecha_id in pecha_ids:
             lang,pechaid = pecha_id
             if not os.path.exists(f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"):
                 continue
 
-            alignment = {
+            source = {
                 pechaid:{
                     "type": "origin_type",
                     "relation": "translation",
                     "language": lang,
                 }
             }
-            self.segment_sources.update(alignment)
+            language.append(lang)
+            self.segment_sources.update(source)
 
         alignments = {
             "segment_sources": self.segment_sources,
             "segment_pairs":self.seg_pairs
         }    
 
-        return alignments        
+        return alignments,language        
 
 
     def create_alignment(self,pecha_ids,pecha_name):
@@ -52,19 +56,33 @@ class Alignment:
         alignment_path = f"{self.root_path}/{alignment_id}/{alignment_id}.opa"
         alignment_vol_map=[]
         for volume in volumes:
-            alignment = self.create_alignment_yml(pecha_ids,volume)
-            #meta = self.create_alignment_meta(alignment_id,volume,pecha_ids)
-            self.write_alignment_repo(f"{alignment_path}/{volume}",alignment)
-            #list2 = [alignment,volume]
-            #alignment_vol_map.append(list2)
+            alignments,language = self.create_alignment_yml(pecha_ids,volume)
+            meta = self.create_alignment_meta(alignment_id,volume,language)
+            self.write_alignment_repo(f"{alignment_path}/{volume}",alignments,meta)
+            alignment_vol = [alignments,volume]
+            alignment_vol_map.append(alignment_vol)
 
-        """ readme = self.create_readme_for_opa(alignment_id,pecha_name,pecha_ids)
-        Path(f"{self.root_path}/{alignment_id}/readme.md").touch(exist_ok=True)
-        Path(f"{self.root_path}/{alignment_id}/readme.md").write_text(readme)
+        self.create_readme_for_opa(alignment_id,pecha_name,pecha_ids) 
+        pechaids = self.get_pecha_ids(pecha_ids)
+        logging.info(f"{alignment_id}:{pechaids}")    
 
-        logging.info(f"{alignment_id}:{list(set([_,pecha_id=pecha for pecha in pecha_ids]))}")   """  
+        return alignment_id,alignment_vol_map
 
-        return alignment_vol_map,alignment_id
+
+    def get_languages(self,pecha_ids: list):
+        lang=[]
+        for pecha_id in pecha_ids:
+            language,_=pecha_id
+            lang.append(language)
+        return lang
+
+
+    def get_pecha_ids(self,pecha_ids: list):
+        pechaids=[]
+        for pecha_id in pecha_ids:
+            _,pechaid=pecha_id
+            pechaids.append(pechaid)
+        return pechaids
 
 
     def get_volumes(self,pecha_ids):
@@ -72,7 +90,7 @@ class Alignment:
         pechaid = ""
         for pecha_id in pecha_ids:
             lang,id = pecha_id
-            if lang == "བོད་ཡིག":
+            if lang == "bo":
                 pechaid = id
                 break
 
@@ -94,7 +112,7 @@ class Alignment:
             if os.path.exists(segment_layer_path):
                 pecha_yaml = load_yaml(Path(segment_layer_path))
                 ids = self.get_ids(pecha_yaml["annotations"])
-                if lang == "བོད་ཡིག":
+                if lang == "bo":
                     segment_length = len(ids)
                 segments_ids[pechaid]= ids
  
@@ -135,15 +153,14 @@ class Alignment:
             dump_yaml(meta, Path(f"{alignment_path}/meta.yml"))
 
 
-    def create_alignment_meta(self,alignment_id,volume,pechas):
-        lang  = list(set([pecha['lang'] for pecha in pechas]))
-
+    def create_alignment_meta(self,alignment_id,volume,language):
+        
         metadata = {
             "id": alignment_id,
             "title": volume,
             "type": "translation",
             "source_metadata":{
-                "languages":lang,
+                "languages":language,
                 "datatype":"PlainText",
                 "created_at":datetime.now(),
                 "last_modified_at":datetime.now()
@@ -151,8 +168,8 @@ class Alignment:
         }
         return metadata
 
-    def create_readme_for_opa(self, alignment_id, pecha_name,pechas):
-        lang  = list(set([pecha['lang'] for pecha in pechas]))
+    def create_readme_for_opa(self, alignment_id, pecha_name,pecha_ids):
+        lang  = self.get_languages(pecha_ids)
 
         type = "translation"
         alignment = f"|Alignment id | {alignment_id}"
@@ -162,4 +179,6 @@ class Alignment:
         languages = f"|Languages | {lang}"
         
         readme = f"{alignment}\n{Table}\n{Title}\n{type}\n{languages}"
-        return readme
+        
+        Path(f"{self.root_path}/{alignment_id}/readme.md").touch(exist_ok=True)
+        Path(f"{self.root_path}/{alignment_id}/readme.md").write_text(readme)
