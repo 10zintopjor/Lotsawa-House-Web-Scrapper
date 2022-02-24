@@ -7,12 +7,16 @@ from openpecha.core.ids import get_pecha_id
 from openpecha.core.layer import InitialCreationEnum, Layer, LayerEnum, PechaMetaData
 from openpecha.core.pecha import OpenPechaFS 
 from openpecha.core.annotation import AnnBase, Span
+from openpecha import github_utils,config
 from datetime import datetime
 from uuid import uuid4
 from index import Alignment
+from pathlib import Path
+from zipfile import ZipFile
 
 import re
 import requests
+import serialize_to_tmx
 
 
 start_url= 'https://www.lotsawahouse.org'
@@ -107,7 +111,7 @@ def get_segment_layer(base_text):
     for text in splited_texts:
         segment_annotation,end = get_segment_annotation(char_walker,text)
         segment_annotations.update(segment_annotation)
-        char_walker += end+1
+        char_walker += end+2
     segment_layer = Layer(annotation_type= LayerEnum.segment,annotations=segment_annotations)   
 
     return segment_layer   
@@ -123,7 +127,6 @@ def create_meta(pecha_id,page_meta,lang):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
     opf = OpenPechaFS(opf_path=opf_path)
     vol_meta = get_volume_meta(page_meta['chapter_subtitle'])
-    lang_code = get_lang_code(lang)
     instance_meta = PechaMetaData(
         id=pecha_id,
         initial_creation_type=InitialCreationEnum.input,
@@ -131,7 +134,7 @@ def create_meta(pecha_id,page_meta,lang):
         last_modified_at=datetime.now(),
         source_metadata={
             "title":page_meta['main_title'],
-            "language": lang_code,
+            "language": lang,
             "description":page_meta["description"],
             "volume":vol_meta
         })    
@@ -190,7 +193,7 @@ def extract_page_text(url,lang_code,has_alignment):
         base_text+=text.strip(" ")
         base_text+="\n\n" if True not in has_alignment else "\n"
 
-    return base_text.strip("\n"),has_alignment
+    return base_text.strip("\n").strip(),has_alignment
 
 def change_text_format(text):
     base_text=""
@@ -247,8 +250,45 @@ def get_lang_code(lang):
 
 def create_alignment(pecha_ids,pecha_name):
     obj = Alignment(root_path)
-    alignment_id,alignmnet_vol_map = obj.create_alignment(pecha_ids,pecha_name)
+    alignment_id,alignment_vol_map = obj.create_alignment(pecha_ids,pecha_name)
+    tmx_path = Path(f"{root_path}/tmx")
+    obj._mkdir(tmx_path)
+    create_tmx(alignment_vol_map,tmx_path)
+    zip_path = create_tmx_zip(tmx_path,pecha_name)
 
+
+def create_tmx(alignment_vol_map,tmx_path):
+    for map in alignment_vol_map:
+        alignment,volume = map   
+        serialize_to_tmx.create_tmx(alignment,volume,tmx_path)
+
+
+def create_tmx_zip(tmx_path,pecha_name):
+    zip_path = f"{root_path}/{pecha_name}.zip"
+    zipObj = ZipFile(zip_path, 'w')
+    tmxs = list(Path(f"{tmx_path}").iterdir())
+    for tmx in tmxs:
+        zipObj.write(tmx)
+    return zip_path
+
+
+def publish_opf(id):
+    pecha_path = f"{root_path}/{id}"
+
+    github_utils.github_publish(
+    pecha_path,
+    not_includes=[],
+    message="initial commit"
+    )  
+    print(f"{id} PUBLISHED")
+
+def create_realease(id,zipped_dir):
+    assest_path =[f"{zipped_dir}"]
+    github_utils.create_release(
+    repo_name=id,
+    asset_paths=assest_path,
+    )
+    print(f"Updated asset to {id}")
 
 def main():
     translation_page = parse_home(start_url)
@@ -261,6 +301,7 @@ def main():
             pecha_ids,pecha_name,has_alignment = parse_page('https://www.lotsawahouse.org/indian-masters/arya-shura/')
             if False not in has_alignment:
                 create_alignment(pecha_ids,pecha_name)
+                
             
             break
         break
