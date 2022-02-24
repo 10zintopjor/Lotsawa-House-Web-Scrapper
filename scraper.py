@@ -56,9 +56,11 @@ def get_links(url):
 def parse_page(url):
     page_meta={}
     chapter_subtitle_map = {}
+    has_alignment = set()
     page = make_request(url)
     lang_elems = page.select('p#lang-list a')
     languages = [lang_elem.text for lang_elem in lang_elems]
+    pecha_name = page.select_one('div#content h1').text
     pecha_ids = get_pecha_ids(languages)
     page_meta.update({
         "main_title":page.select_one('div#content h1').text,
@@ -66,7 +68,6 @@ def parse_page(url):
         })
     main_div = page.find('div',{'id':'content'})
     headings = main_div.find_all('h4')
-
     for heading in headings:
         if heading.get_text() == "Related Topics":
             continue
@@ -74,26 +75,26 @@ def parse_page(url):
         for chapter_elem in chapter_elems:
             chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
             href = chapter_elem['href']
-            base_text,has_alignment = get_text(start_url+href)
+            base_text,bool_alignment = get_text(start_url+href)
+            has_alignment = set.union(has_alignment,bool_alignment)
             for pecha_id in pecha_ids:
                 language,pechaid = pecha_id
                 if language in base_text:
                     chapter = chapter_elem.text
-                    create_opf(pechaid,base_text[language],chapter,has_alignment)
+                    create_opf(pechaid,base_text[language],chapter)
     page_meta.update({"chapter_subtitle":chapter_subtitle_map})
     for pecha_id in pecha_ids:
         lang,pechaid = pecha_id
         create_meta(pechaid,page_meta,lang)
 
-    return pecha_ids,page.select_one('div#content h1').text
+    return pecha_ids,pecha_name,has_alignment
 
-def create_opf(pecha_id,base_text,chapter,has_alignment):
+def create_opf(pecha_id,base_text,chapter):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
     opf = OpenPechaFS(opf_path=opf_path)
     bases= {f"{chapter}":base_text}
     opf.base = bases
     opf.save_base()
-    #if False not in has_alignment:
     layers = {f"{chapter}": {LayerEnum.segment: get_segment_layer(base_text)}}
     opf.layers = layers
     opf.save_layers()
@@ -157,16 +158,15 @@ def get_text(url):
     language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
     for language_page in language_pages:
         language,href = language_page
-        text,bool_alignment = extract_page_text(start_url+href,language)
+        text,bool_alignment = extract_page_text(start_url+href,language,has_alignment)
         has_alignment = set.union(has_alignment,bool_alignment)
         base_text.update({language:text})
 
     return base_text,has_alignment
 
 
-def extract_page_text(url,language):
+def extract_page_text(url,language,has_alignment):
     base_text=""
-    has_alignment = set()
     page = make_request(url)
     div_main = page.select_one('div#maintext')
     childrens = div_main.findChildren(recursive=False)
@@ -221,8 +221,12 @@ def get_pecha_ids(languages):
     return pecha_ids
 
 
-def main():
+def create_alignment(pecha_ids,pecha_name):
     obj = Alignment(root_path)
+    obj.create_alignment(pecha_ids,pecha_name)
+
+
+def main():
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
     for link in links:
@@ -230,8 +234,10 @@ def main():
         pecha_links = links[link]
         for pecha_link in pecha_links:
             #pecha_ids,pecha_name = parse_page(start_url+pecha_link)
-            parse_page('https://www.lotsawahouse.org/topics/abhidharmakosha/')
-            #obj.create_alignment(pecha_ids,pecha_name)
+            pecha_ids,pecha_name,has_alignment = parse_page('https://www.lotsawahouse.org/indian-masters/arya-shura/')
+            if False not in has_alignment:
+                create_alignment(pecha_ids,pecha_name)
+            
             break
         break
     
