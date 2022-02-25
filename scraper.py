@@ -1,6 +1,7 @@
 from ctypes import alignment
 from email.mime import base
 from pydoc import pager
+from socket import has_dualstack_ipv6
 from urllib import response
 from bs4 import BeautifulSoup
 from openpecha.core.ids import get_pecha_id
@@ -17,10 +18,16 @@ from zipfile import ZipFile
 import re
 import requests
 import serialize_to_tmx
+import logging
 
+logging.basicConfig(
+    filename="err.log",
+    format="%(levelname)s: %(message)s",
+    level=logging.INFO,
+)
 
 start_url= 'https://www.lotsawahouse.org'
-root_path = './opfs'
+root_path = ''
 
 def make_request(url):
     response = requests.get(url)
@@ -58,6 +65,7 @@ def get_links(url):
 
 
 def parse_page(url):
+    global root_path
     page_meta={}
     chapter_subtitle_map = {}
     has_alignment = set()
@@ -68,10 +76,12 @@ def parse_page(url):
     pecha_ids = get_pecha_ids(languages)
     page_meta.update({
         "main_title":page.select_one('div#content h1').text,
-        "description":page.select_one("div#content b").text 
+        "description":page.select_one("div#content b").text.strip("\n")
         })
     main_div = page.find('div',{'id':'content'})
     headings = main_div.find_all('h4')
+    root_path=f"./opfs/{page.select_one('div#content h1').text}"
+    print(pecha_name)
     for heading in headings:
         if heading.get_text() == "Related Topics":
             continue
@@ -85,7 +95,11 @@ def parse_page(url):
                 language,pechaid = pecha_id
                 if language in base_text:
                     chapter = chapter_elem.text
-                    create_opf(pechaid,base_text[language],chapter)
+                    try:
+                        create_opf(pechaid,base_text[language],chapter)
+                    except:
+                        logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}") 
+
     page_meta.update({"chapter_subtitle":chapter_subtitle_map})
     for pecha_id in pecha_ids:
         lang,pechaid = pecha_id
@@ -178,7 +192,7 @@ def extract_page_text(url,lang_code,has_alignment):
     if len(childrens) == 1 and childrens[0].name == "div":
         childrens = childrens[0].findChildren(recursive=False)
     for children in childrens:
-        text = children.get_text()
+        text = remove_endlines(children.get_text())
         if children.has_attr('class'):
             if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and lang_code != "bo":
                 has_alignment.add(True)
@@ -187,6 +201,8 @@ def extract_page_text(url,lang_code,has_alignment):
             break
         elif text == "\xa0":
             base_text+="\n"
+            continue
+        elif text == "":
             continue
         if len(text)>90:
             text = change_text_format(text)
@@ -218,6 +234,13 @@ def change_text_format(text):
         prev = base_text[-1]
     return base_text[:-1] if base_text[-1] == "\n" else base_text
 
+
+def remove_endlines(text):
+    prev = ''
+    while prev != text.strip("\n"):
+        prev =text.strip("\n")
+
+    return prev    
 
 def get_pecha_ids(languages):
     pecha_ids = []
@@ -295,17 +318,22 @@ def main():
     links = get_links(translation_page)
     for link in links:
         main_title = link
+        print(main_title)
         pecha_links = links[link]
         for pecha_link in pecha_links:
-            #pecha_ids,pecha_name = parse_page(start_url+pecha_link)
-            pecha_ids,pecha_name,has_alignment = parse_page('https://www.lotsawahouse.org/indian-masters/arya-shura/')
+            try:
+                pecha_ids,pecha_name,has_alignment = parse_page(start_url+pecha_link)
+            except:
+                logging.info(f"main error: {start_url+pecha_link}")
+                pass
+            #pecha_ids,pecha_name,has_alignment = parse_page('https://www.lotsawahouse.org/tibetan-masters/chokgyur-dechen-lingpa/')
             if False not in has_alignment:
-                create_alignment(pecha_ids,pecha_name)
-                
-            
-            break
-        break
-    
+                try:
+                    create_alignment(pecha_ids,pecha_name)
+                except:
+                    logging.info(f"alignment error: {pecha_name}") 
+
+
 
 if __name__ == "__main__":
     main()

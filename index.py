@@ -64,7 +64,7 @@ class Alignment:
 
         self.create_readme_for_opa(alignment_id,pecha_name,pecha_ids) 
         pechaids = self.get_pecha_ids(pecha_ids)
-        logging.info(f"{alignment_id}:{pechaids}")    
+        #logging.info(f"{alignment_id}:{pechaids}")    
 
         return alignment_id,alignment_vol_map
 
