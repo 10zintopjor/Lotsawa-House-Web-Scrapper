@@ -59,7 +59,6 @@ def get_links(url):
             main_name = comp_name.get_text()
             links_list.append(comp_name['href'])
             links.update({main_name:links_list})
-
     return links    
 
 
@@ -85,20 +84,16 @@ def parse_page(url):
         if heading.get_text() == "Related Topics":
             continue
         chapter_elems = heading.find_next_sibling('div').select('ul > li > a:first-child')
-        for chapter_elem in chapter_elems:
-            chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
-            href = chapter_elem['href']
-            base_text,bool_alignment = get_text(start_url+href)
-            if bool_alignment:
-                has_alignment.update({chapter_elem.text:bool_alignment})
-            for pecha_id in pecha_ids:
-                language,pechaid = pecha_id
-                if language in base_text:
-                    chapter = chapter_elem.text
-                    try:
-                        create_opf(pechaid,base_text[language],chapter)
-                    except:
-                        logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}") 
+        heading_title = heading.get_text()
+        c_s_m,h_a = get_chapters(chapter_elems,pecha_ids,pecha_name,heading_title)
+        chapter_subtitle_map.update(c_s_m)
+        has_alignment.update(h_a)        
+    
+    if not headings:
+        chapter_elems = main_div.select('div.index-container > ul > li > a:first-child')
+        c_s_m,h_a = get_chapters(chapter_elems,pecha_ids)
+        chapter_subtitle_map.update(c_s_m)
+        has_alignment.update(h_a) 
 
     page_meta.update({"chapter_subtitle":chapter_subtitle_map})
     for pecha_id in pecha_ids:
@@ -106,6 +101,27 @@ def parse_page(url):
         create_meta(pechaid,page_meta,lang)
 
     return pecha_ids,pecha_name,has_alignment
+
+
+
+def get_chapters(chapter_elems,pecha_ids,pecha_name,heading_title=None):
+    chapter_subtitle_map = {}
+    has_alignment = {}
+    for chapter_elem in chapter_elems:
+        chapter_subtitle_map.update({chapter_elem.text:heading_title})
+        href = chapter_elem['href']
+        base_text,bool_alignment = get_text(start_url+href)
+        if bool_alignment:
+            has_alignment.update({chapter_elem.text:bool_alignment})
+        for pecha_id in pecha_ids:
+            language,pechaid = pecha_id
+            if language in base_text:
+                chapter = chapter_elem.text
+                try:
+                    create_opf(pechaid,base_text[language],chapter)
+                except:
+                    logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}") 
+    return chapter_subtitle_map,has_alignment
 
 
 def get_text(url):
@@ -173,17 +189,18 @@ def get_segment_layer(base_text):
     for text in splited_texts:
         if text == "":
             continue
-        segment_annotation,end = get_segment_annotation(char_walker,text)
+        segment_annotation,char_walker = get_segment_annotation(char_walker,text)
         segment_annotations.update(segment_annotation)
-        char_walker += end+2
     segment_layer = Layer(annotation_type= LayerEnum.segment,annotations=segment_annotations)   
 
     return segment_layer   
 
 
 def get_segment_annotation(char_walker,text):
-    segment_annotation = {uuid4().hex:AnnBase(span=Span(start=char_walker, end=char_walker + len(text) - 2))}
-    return (segment_annotation,len(text))
+    start = char_walker
+    end = char_walker +len(text)
+    segment_annotation = {uuid4().hex:AnnBase(span=Span(start=start,end=end))}
+    return (segment_annotation,end+2)
 
 
 def create_meta(pecha_id,page_meta,lang):
@@ -329,26 +346,23 @@ def create_realease(id,zipped_dir):
 def main():
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
-    pecha_ids,pecha_name,alignment = parse_page('https://www.lotsawahouse.org/topics/tengyur/')
-    if bool(alignment):
-        create_alignment(pecha_ids,pecha_name,alignment)
-    """ for link in links:
+    for link in links:
         main_title = link
         print(main_title)
         pecha_links = links[link]
         
         for pecha_link in pecha_links:
             try:
-                pecha_ids,pecha_name,has_alignment = parse_page(start_url+pecha_link)
+                pecha_ids,pecha_name,alignment = parse_page(start_url+pecha_link)
             except:
                 logging.info(f"main error: {start_url+pecha_link}")
                 pass
         
-            if False not in has_alignment:
+            if bool(alignment):
                 try:
-                    create_alignment(pecha_ids,pecha_name)
+                    create_alignment(pecha_ids,pecha_name,alignment)
                 except:
-                    logging.info(f"alignment error: {pecha_name}") """ 
+                    logging.info(f"alignment error: {pecha_name}") 
 
 
 if __name__ == "__main__":

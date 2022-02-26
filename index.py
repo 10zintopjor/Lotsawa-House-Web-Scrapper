@@ -72,12 +72,7 @@ class Alignment:
             for pecha_id in pecha_ids:
                 lang,pechaid = pecha_id
                 if lang in lang_with_algnmt: 
-                    print(pecha_id)
-                    print(volume)
-                    print(lang_with_algnmt)
-                    print(lang)
-                    print(segments_ids[pechaid])
-                    cur_pair[pechaid]=segments_ids[pechaid][num]
+                    cur_pair[pechaid]=segments_ids[pechaid][num] if num in segments_ids[pechaid] else 'None'
             pair[uuid4().hex] = deepcopy(cur_pair)
             seg_pairs.update(pair)
 
