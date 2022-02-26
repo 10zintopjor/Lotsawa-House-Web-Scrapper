@@ -14,25 +14,24 @@ from uuid import uuid4
 from index import Alignment
 from pathlib import Path
 from zipfile import ZipFile
-
 import re
 import requests
 import serialize_to_tmx
 import logging
 
+
 logging.basicConfig(
     filename="err.log",
     format="%(levelname)s: %(message)s",
-    level=logging.INFO,
-)
+    level=logging.INFO)
 
 start_url= 'https://www.lotsawahouse.org'
 root_path = ''
 
+
 def make_request(url):
     response = requests.get(url)
     soup = BeautifulSoup(response.content,'html.parser')
-
     return soup
 
 
@@ -68,7 +67,7 @@ def parse_page(url):
     global root_path
     page_meta={}
     chapter_subtitle_map = {}
-    has_alignment = set()
+    has_alignment = {}
     page = make_request(url)
     lang_elems = page.select('p#lang-list a')
     languages = [lang_elem.text for lang_elem in lang_elems]
@@ -90,7 +89,8 @@ def parse_page(url):
             chapter_subtitle_map.update({chapter_elem.text:heading.get_text()})
             href = chapter_elem['href']
             base_text,bool_alignment = get_text(start_url+href)
-            has_alignment = set.union(has_alignment,bool_alignment)
+            if bool_alignment:
+                has_alignment.update({chapter_elem.text:bool_alignment})
             for pecha_id in pecha_ids:
                 language,pechaid = pecha_id
                 if language in base_text:
@@ -106,6 +106,54 @@ def parse_page(url):
         create_meta(pechaid,page_meta,lang)
 
     return pecha_ids,pecha_name,has_alignment
+
+
+def get_text(url):
+    page = make_request(url)
+    base_text = {}
+    has_alignment = []
+    lang_elems = page.select('p#lang-list a')
+    language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
+    for language_page in language_pages:
+        language,href = language_page
+        lang_code = get_lang_code(language)
+        text,bool_alignment = extract_page_text(start_url+href,lang_code,has_alignment)
+        if bool_alignment == True:
+            has_alignment.append(lang_code) 
+        base_text.update({lang_code :text})
+    if has_alignment:
+        has_alignment.append("bo")
+    return base_text,has_alignment
+
+
+def extract_page_text(url,lang_code,prev_alignment):
+    base_text=""
+    has_alignment = None
+    page = make_request(url)
+    div_main = page.select_one('div#maintext')
+    childrens = div_main.findChildren(recursive=False)
+    if len(childrens) == 1 and childrens[0].name == "div":
+        childrens = childrens[0].findChildren(recursive=False)
+    for children in childrens:
+        text = remove_endlines(children.get_text())
+        if children.has_attr('class'):
+            if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and lang_code != "bo":
+                has_alignment=True
+                continue
+        if text in ("Bibliography","Bibliographie"):
+            break
+        elif text == "\xa0":
+            base_text+="\n"
+            continue
+        elif text == "":
+            continue
+        if len(text)>90:
+            text = change_text_format(text)
+        base_text+=text.strip(" ")
+        base_text+="\n\n" if has_alignment != True and not prev_alignment else "\n"
+
+    return base_text.strip("\n").strip(),has_alignment
+
 
 def create_opf(pecha_id,base_text,chapter):
     opf_path = f"{root_path}/{pecha_id}/{pecha_id}.opf"
@@ -123,6 +171,8 @@ def get_segment_layer(base_text):
     char_walker = 0
     splited_texts = base_text.split("\n\n")
     for text in splited_texts:
+        if text == "":
+            continue
         segment_annotation,end = get_segment_annotation(char_walker,text)
         segment_annotations.update(segment_annotation)
         char_walker += end+2
@@ -130,10 +180,9 @@ def get_segment_layer(base_text):
 
     return segment_layer   
 
+
 def get_segment_annotation(char_walker,text):
-
     segment_annotation = {uuid4().hex:AnnBase(span=Span(start=char_walker, end=char_walker + len(text) - 2))}
-
     return (segment_annotation,len(text))
 
 
@@ -168,49 +217,6 @@ def get_volume_meta(chapter_subtitle):
     return meta
 
 
-def get_text(url):
-    page = make_request(url)
-    base_text = {}
-    has_alignment = set()
-    lang_elems = page.select('p#lang-list a')
-    language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
-    for language_page in language_pages:
-        language,href = language_page
-        lang_code = get_lang_code(language)
-        text,bool_alignment = extract_page_text(start_url+href,lang_code,has_alignment)
-        has_alignment = set.union(has_alignment,bool_alignment)
-        base_text.update({lang_code :text})
-
-    return base_text,has_alignment
-
-
-def extract_page_text(url,lang_code,has_alignment):
-    base_text=""
-    page = make_request(url)
-    div_main = page.select_one('div#maintext')
-    childrens = div_main.findChildren(recursive=False)
-    if len(childrens) == 1 and childrens[0].name == "div":
-        childrens = childrens[0].findChildren(recursive=False)
-    for children in childrens:
-        text = remove_endlines(children.get_text())
-        if children.has_attr('class'):
-            if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and lang_code != "bo":
-                has_alignment.add(True)
-                continue
-        if text in ("Bibliography","Bibliographie"):
-            break
-        elif text == "\xa0":
-            base_text+="\n"
-            continue
-        elif text == "":
-            continue
-        if len(text)>90:
-            text = change_text_format(text)
-        base_text+=text.strip(" ")
-        base_text+="\n\n" if True not in has_alignment else "\n"
-
-    return base_text.strip("\n").strip(),has_alignment
-
 def change_text_format(text):
     base_text=""
     prev= ""
@@ -242,6 +248,7 @@ def remove_endlines(text):
 
     return prev    
 
+
 def get_pecha_ids(languages):
     pecha_ids = []
     for language in languages:
@@ -266,18 +273,23 @@ def get_lang_code(lang):
         code = "it"                 
     elif lang == "Nederlands":
         code = "nl"
+    elif lang == "Português":
+        code = "pt"
+    elif lang =="中文":
+        code ="zh"
     else:
         code = "un"
 
     return code        
 
-def create_alignment(pecha_ids,pecha_name):
+
+def create_alignment(pecha_ids,pecha_name,alignment):
     obj = Alignment(root_path)
-    alignment_id,alignment_vol_map = obj.create_alignment(pecha_ids,pecha_name)
-    tmx_path = Path(f"{root_path}/tmx")
+    alignment_id,alignment_vol_map = obj.create_alignment(pecha_ids,pecha_name,alignment)
+    """ tmx_path = Path(f"{root_path}/tmx")
     obj._mkdir(tmx_path)
     create_tmx(alignment_vol_map,tmx_path)
-    zip_path = create_tmx_zip(tmx_path,pecha_name)
+    zip_path = create_tmx_zip(tmx_path,pecha_name) """
 
 
 def create_tmx(alignment_vol_map,tmx_path):
@@ -297,13 +309,13 @@ def create_tmx_zip(tmx_path,pecha_name):
 
 def publish_opf(id):
     pecha_path = f"{root_path}/{id}"
-
     github_utils.github_publish(
     pecha_path,
     not_includes=[],
     message="initial commit"
     )  
     print(f"{id} PUBLISHED")
+
 
 def create_realease(id,zipped_dir):
     assest_path =[f"{zipped_dir}"]
@@ -313,26 +325,30 @@ def create_realease(id,zipped_dir):
     )
     print(f"Updated asset to {id}")
 
+
 def main():
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
-    for link in links:
+    pecha_ids,pecha_name,alignment = parse_page('https://www.lotsawahouse.org/topics/tengyur/')
+    if bool(alignment):
+        create_alignment(pecha_ids,pecha_name,alignment)
+    """ for link in links:
         main_title = link
         print(main_title)
         pecha_links = links[link]
+        
         for pecha_link in pecha_links:
             try:
                 pecha_ids,pecha_name,has_alignment = parse_page(start_url+pecha_link)
             except:
                 logging.info(f"main error: {start_url+pecha_link}")
                 pass
-            #pecha_ids,pecha_name,has_alignment = parse_page('https://www.lotsawahouse.org/tibetan-masters/chokgyur-dechen-lingpa/')
+        
             if False not in has_alignment:
                 try:
                     create_alignment(pecha_ids,pecha_name)
                 except:
-                    logging.info(f"alignment error: {pecha_name}") 
-
+                    logging.info(f"alignment error: {pecha_name}") """ 
 
 
 if __name__ == "__main__":

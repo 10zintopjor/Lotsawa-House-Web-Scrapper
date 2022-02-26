@@ -23,15 +23,14 @@ class Alignment:
     def __init__(self,path):
         self.root_path = path
 
-    def create_alignment_yml(self,pecha_ids,volume):
-        self.seg_pairs = self.get_segment_pairs(pecha_ids,volume)
+    def create_alignment_yml(self,pecha_ids,volume,al):
+        self.seg_pairs = self.get_segment_pairs(pecha_ids,volume,al[volume])
         self.segment_sources = {}
         language = []
         for pecha_id in pecha_ids:
             lang,pechaid = pecha_id
-            if not os.path.exists(f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"):
+            if lang not in al[volume]:
                 continue
-
             source = {
                 pechaid:{
                     "type": "origin_type",
@@ -49,14 +48,50 @@ class Alignment:
 
         return alignments,language        
 
+    def get_segment_pairs(self,pecha_ids,volume,lang_with_algnmt):
+        segments_ids = {}
+        cur_pair = {}
+        pair= {}
+        seg_pairs = {}
+        segment_length = ""
 
-    def create_alignment(self,pecha_ids,pecha_name):
+        for pecha_id in pecha_ids:
+            lang,pechaid = pecha_id
+            if lang in lang_with_algnmt:
+                segment_layer_path = f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"
+                pecha_yaml = load_yaml(Path(segment_layer_path))
+                ids = self.get_ids(pecha_yaml["annotations"])
+                if lang == "bo":
+                    segment_length = len(ids)
+                segments_ids[pechaid]= ids
+ 
+        if segment_length == "":
+            return seg_pairs
+
+        for num in range(1,segment_length+1):
+            for pecha_id in pecha_ids:
+                lang,pechaid = pecha_id
+                if lang in lang_with_algnmt: 
+                    print(pecha_id)
+                    print(volume)
+                    print(lang_with_algnmt)
+                    print(lang)
+                    print(segments_ids[pechaid])
+                    cur_pair[pechaid]=segments_ids[pechaid][num]
+            pair[uuid4().hex] = deepcopy(cur_pair)
+            seg_pairs.update(pair)
+
+        return seg_pairs
+
+    def create_alignment(self,pecha_ids,pecha_name,al):
         volumes = self.get_volumes(pecha_ids)
         alignment_id = get_alignment_id()
         alignment_path = f"{self.root_path}/{alignment_id}/{alignment_id}.opa"
         alignment_vol_map=[]
         for volume in volumes:
-            alignments,language = self.create_alignment_yml(pecha_ids,volume)
+            if volume not in al:
+                continue
+            alignments,language = self.create_alignment_yml(pecha_ids,volume,al)
             meta = self.create_alignment_meta(alignment_id,volume,language)
             self.write_alignment_repo(f"{alignment_path}/{volume}",alignments,meta)
             alignment_vol = [alignments,volume]
@@ -98,37 +133,6 @@ class Alignment:
         for path in sorted(paths):
             volumes.append(path.stem)
         return volumes
-
-    def get_segment_pairs(self,pecha_ids,volume):
-        segments_ids = {}
-        cur_pair = {}
-        pair= {}
-        seg_pairs = {}
-        segment_length = ""
-
-        for pecha_id in pecha_ids:
-            lang,pechaid = pecha_id
-            segment_layer_path = f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"
-            if os.path.exists(segment_layer_path):
-                pecha_yaml = load_yaml(Path(segment_layer_path))
-                ids = self.get_ids(pecha_yaml["annotations"])
-                if lang == "bo":
-                    segment_length = len(ids)
-                segments_ids[pechaid]= ids
- 
-        if segment_length == "":
-            return seg_pairs
-
-        for num in range(1,segment_length+1):
-            for pecha_id in pecha_ids:
-                _,pechaid = pecha_id
-                segment_layer_path = f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"
-                if os.path.exists(segment_layer_path):
-                    cur_pair[pechaid]=segments_ids[pechaid][num]
-            pair[uuid4().hex] = deepcopy(cur_pair)
-            seg_pairs.update(pair)
-
-        return seg_pairs
 
 
     @staticmethod
