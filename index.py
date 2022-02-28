@@ -13,12 +13,6 @@ from datetime import date, datetime
 
 
 
-logging.basicConfig(
-    filename="alignment_opf_map.log",
-    format="%(levelname)s: %(message)s",
-    level=logging.INFO,
-)
-
 class Alignment:
     def __init__(self,path):
         self.root_path = path

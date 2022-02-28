@@ -19,13 +19,12 @@ import re
 import requests
 import serialize_to_tmx
 import logging
+import csv
 
 
-logging.basicConfig(
-    filename="err.log",
-    format="%(levelname)s: %(message)s",
-    level=logging.INFO)
-
+pechas_catalog = ''
+alignment_catalog = ''
+err_log = ''
 start_url= 'https://www.lotsawahouse.org'
 root_path = ''
 
@@ -100,6 +99,7 @@ def parse_page(url):
     for pecha_id in pecha_ids:
         lang,pechaid = pecha_id
         create_meta(pechaid,page_meta,lang)
+        create_readme(pechaid,lang,pecha_name)
 
     return pecha_ids,pecha_name,has_alignment
 
@@ -118,12 +118,10 @@ def get_chapters(chapter_elems,pecha_ids,pecha_name,heading_title=None):
             language,pechaid = pecha_id
             if language in base_text:
                 chapter = chapter_elem.text
-                create_opf(pechaid,base_text[language],chapter)
-
-                """ try:
+                try:
                     create_opf(pechaid,base_text[language],chapter)
                 except:
-                    logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}")  """
+                    err_log.info(f"Opf Error : {pecha_name}:{chapter}:{language}") 
     return chapter_subtitle_map,has_alignment
 
 
@@ -225,6 +223,16 @@ def create_meta(pecha_id,page_meta,lang):
     opf._meta = instance_meta
     opf.save_meta()
 
+def create_readme(pecha_id,lang,pecha_name):
+
+    id = f"|pecha id | {pecha_id}"
+    Table = "| --- | --- "
+    Title = f"|Title | {pecha_name} "
+    language = f"|Languages | {lang}"
+    
+    readme = f"{id}\n{Table}\n{Title}\n{language}"
+    
+    Path(f"{root_path}/{pecha_id}/readme.md").write_text(readme)
 
 def get_volume_meta(chapter_subtitle):
     meta={}
@@ -306,11 +314,28 @@ def get_lang_code(lang):
 def create_alignment(pecha_ids,pecha_name,alignment):
     obj = Alignment(root_path)
     alignment_id,alignment_vol_map = obj.create_alignment(pecha_ids,pecha_name,alignment)
-    tmx_path = Path(f"{root_path}/tmx")
+    alignment_catalog.info(f"{alignment_id},{pecha_name}")
+    create_csv(alignment_id,pecha_ids)
+    tmx_path = Path(f"./tmx/{pecha_name}")
     obj._mkdir(tmx_path)
     create_tmx(alignment_vol_map,tmx_path,root_path)
     zip_path = create_tmx_zip(tmx_path,pecha_name)
+    return alignment_id,zip_path
 
+def create_csv(alignment_id,pecha_ids):
+    filename = ""
+    for i,pecha_id in enumerate(pecha_ids):
+        lang,pechaid =pecha_id
+        filename+=lang
+        if len(pecha_ids) > i+1:
+            filename+='-'
+    with open(f"{root_path}/{alignment_id}/{filename}.csv",'w') as f:
+        writer = csv.writer(f)
+        writer.writerow(["pecha id","language","url"])
+        for pecha_id in pecha_ids:
+            lang,pechaid = pecha_id
+            url = f"https://github.com/OpenPecha/{pechaid}"
+            writer.writerow([pechaid,lang,url])
 
 def create_tmx(alignment_vol_map,tmx_path,root_path):
     for map in alignment_vol_map:
@@ -345,20 +370,39 @@ def create_realease(id,zipped_dir):
     )
     print(f"Updated asset to {id}")
 
+def set_up_logger(logger_name):
+    logger = logging.getLogger(logger_name)
+    formatter = logging.Formatter("%(message)s")
+    fileHandler = logging.FileHandler(f"{logger_name}.log")
+    fileHandler.setFormatter(formatter)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(fileHandler)
+
+    return logger
 
 def main():
+    global pechas_catalog,alignment_catalog,err_log
+    pechas_catalog = set_up_logger("pechas_catalog")
+    alignment_catalog =set_up_logger("alignment_catalog")
+    err_log = set_up_logger('err')
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
-    try:
-        pecha_ids,pecha_name,alignment = parse_page('https://www.lotsawahouse.org/tibetan-masters/chatral-rinpoche/')
+    """ try:
+        pecha_ids,pecha_name,alignment = parse_page('https://www.lotsawahouse.org/tibetan-masters/adeu-rinpoche/')
+        for pecha_id in pecha_ids:
+            lang,pechaid =pecha_id
+            pechas_catalog.info(f"{pechaid},{lang},{pecha_name}")
+            publish_opf(pechaid)    
     except:
-        logging.info(f"main error: {test}")
+        err_log.info(f"main error: {test}")
         pass
     
     if bool(alignment):
-        create_alignment(pecha_ids,pecha_name,alignment)
+        alignment_id,zipped_path = create_alignment(pecha_ids,pecha_name,alignment)
+        publish_opf(alignment_id)
+        create_realease(alignment_id,zipped_path) """
 
-    """ for link in links:
+    for link in links:
         main_title = link
         print(main_title)
         pecha_links = links[link]
@@ -366,16 +410,22 @@ def main():
         for pecha_link in pecha_links:
             try:
                 pecha_ids,pecha_name,alignment = parse_page(start_url+pecha_link)
+                for pecha_id in pecha_ids:
+                    lang,pechaid =pecha_id
+                    pechas_catalog.info(f"{pechaid},{lang},{pecha_name}")
+                    publish_opf(pechaid)
             except:
-                logging.info(f"main error: {start_url+pecha_link}")
+                err_log.info(f"main error: {start_url+pecha_link}")
                 pass
         
             if bool(alignment):
                 try:
-                    create_alignment(pecha_ids,pecha_name,alignment)
+                    alignment_id,zipped_path = create_alignment(pecha_ids,pecha_name,alignment)
+                    publish_opf(alignment_id)
+                    create_realease(alignment_id,zipped_path)
                 except:
-                    logging.info(f"alignment error: {pecha_name}") 
- """
+                    err_log.info(f"alignment error: {pecha_name}") 
+
 
 if __name__ == "__main__":
     main()
