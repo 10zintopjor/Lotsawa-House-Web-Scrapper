@@ -1,3 +1,4 @@
+from cgi import test
 from ctypes import alignment
 from email.mime import base
 from pydoc import pager
@@ -91,7 +92,7 @@ def parse_page(url):
     
     if not headings:
         chapter_elems = main_div.select('div.index-container > ul > li > a:first-child')
-        c_s_m,h_a = get_chapters(chapter_elems,pecha_ids)
+        c_s_m,h_a = get_chapters(chapter_elems,pecha_ids,pecha_name)
         chapter_subtitle_map.update(c_s_m)
         has_alignment.update(h_a) 
 
@@ -117,10 +118,12 @@ def get_chapters(chapter_elems,pecha_ids,pecha_name,heading_title=None):
             language,pechaid = pecha_id
             if language in base_text:
                 chapter = chapter_elem.text
-                try:
+                create_opf(pechaid,base_text[language],chapter)
+
+                """ try:
                     create_opf(pechaid,base_text[language],chapter)
                 except:
-                    logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}") 
+                    logging.info(f"Opf Error : {pecha_name}:{chapter}:{language}")  """
     return chapter_subtitle_map,has_alignment
 
 
@@ -303,16 +306,16 @@ def get_lang_code(lang):
 def create_alignment(pecha_ids,pecha_name,alignment):
     obj = Alignment(root_path)
     alignment_id,alignment_vol_map = obj.create_alignment(pecha_ids,pecha_name,alignment)
-    """ tmx_path = Path(f"{root_path}/tmx")
+    tmx_path = Path(f"{root_path}/tmx")
     obj._mkdir(tmx_path)
-    create_tmx(alignment_vol_map,tmx_path)
-    zip_path = create_tmx_zip(tmx_path,pecha_name) """
+    create_tmx(alignment_vol_map,tmx_path,root_path)
+    zip_path = create_tmx_zip(tmx_path,pecha_name)
 
 
-def create_tmx(alignment_vol_map,tmx_path):
+def create_tmx(alignment_vol_map,tmx_path,root_path):
     for map in alignment_vol_map:
         alignment,volume = map   
-        serialize_to_tmx.create_tmx(alignment,volume,tmx_path)
+        serialize_to_tmx.create_tmx(alignment,volume,tmx_path,root_path)
 
 
 def create_tmx_zip(tmx_path,pecha_name):
@@ -346,7 +349,16 @@ def create_realease(id,zipped_dir):
 def main():
     translation_page = parse_home(start_url)
     links = get_links(translation_page)
-    for link in links:
+    try:
+        pecha_ids,pecha_name,alignment = parse_page('https://www.lotsawahouse.org/tibetan-masters/chatral-rinpoche/')
+    except:
+        logging.info(f"main error: {test}")
+        pass
+    
+    if bool(alignment):
+        create_alignment(pecha_ids,pecha_name,alignment)
+
+    """ for link in links:
         main_title = link
         print(main_title)
         pecha_links = links[link]
@@ -363,7 +375,7 @@ def main():
                     create_alignment(pecha_ids,pecha_name,alignment)
                 except:
                     logging.info(f"alignment error: {pecha_name}") 
-
+ """
 
 if __name__ == "__main__":
     main()
