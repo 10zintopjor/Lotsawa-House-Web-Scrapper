@@ -113,22 +113,29 @@ class LHParser(Alignment):
             chapter = chapter_elem.text
             base_chapter_map.append([base_id,chapter,order,heading_title])
             href = chapter_elem['href']
-            base_text,bool_alignment = self.get_text(self.start_url+href)
+            base_text,bool_alignment,source_file = self.get_text(self.start_url+href)
             if bool_alignment:
                 has_alignment.update({base_id:bool_alignment})
             for pecha_id in self.pecha_ids:
                 language,pechaid = pecha_id
                 if language in base_text:
-                    try:
+                    self.create_opf(pechaid,base_text[language],base_id)
+                    self.save_source(source_file[language],base_id,pechaid)
+                    """ try:
                         self.create_opf(pechaid,base_text[language],base_id)
                     except:
-                        self.err_log.info(f"Opf Error : {self.pecha_name}:{chapter}:{language}") 
+                        self.err_log.info(f"Opf Error : {self.pecha_name}:{chapter}:{language}")  """
             order+=1
         return has_alignment,base_chapter_map,order
+
+    def save_source(self,page,base_id,pecha_id):
+        self._mkdir(Path(f"{self.root_opf_path}/{pecha_id}/Source"))
+        Path(f"{self.root_opf_path}/{pecha_id}/Source/{base_id}.html").write_text(page)
 
 
     def get_text(self,url):
         page = self.make_request(url)
+        source_file = {}
         base_text = {}
         has_alignment = []
         lang_elems = page.select('p#lang-list a')
@@ -140,10 +147,14 @@ class LHParser(Alignment):
             if bool_alignment == True:
                 has_alignment.append(lang_code) 
             base_text.update({lang_code :text})
+            source_file[lang_code] = self.get_page(self.start_url+href)
         if has_alignment:
             has_alignment.append("bo")
-        return base_text,has_alignment
+        return base_text,has_alignment,source_file
 
+    def get_page(self,url):
+        response = requests.get(url)
+        return response.text.strip()
     
     def extract_page_text(self,url,lang_code,prev_alignment):
         base_text=""
@@ -211,6 +222,7 @@ class LHParser(Alignment):
         base_meta = self.get_base_meta(base_chapter_map)
         instance_meta = InitialPechaMetadata(
             id=pechaid,
+            source =self.start_url,
             initial_creation_type=InitialCreationType.input,
             source_metadata={
                 "title":page_meta['main_title'],
@@ -308,10 +320,9 @@ class LHParser(Alignment):
 
         return code
 
-    def get_alignment(self,pecha_ids,pecha_name,alignment):
-        alignment_id,alignment_vol_map = self.create_alignment(pecha_ids,pecha_name,alignment)
-        self.alignment_catalog.info(f"{alignment_id},{pecha_name}")
-        self.create_csv(alignment_id,pecha_ids)
+    def get_alignment(self,alignment):
+        alignment_id,alignment_vol_map = self.create_alignment(self.pecha_ids,self.pecha_name,alignment)
+        self.create_csv(alignment_id,self.pecha_ids)
         tmx_zip_path = self.create_tmx(alignment_vol_map)
         return alignment_id,tmx_zip_path
 
@@ -360,6 +371,23 @@ class LHParser(Alignment):
 
         return logger
 
+    def publish_opf(self,path):
+        github_utils.github_publish(
+        path,
+        not_includes=[],
+        message="initial commit"
+        )  
+        print(f"{path} PUBLISHED")
+
+
+    def create_realease(self,id,zipped_dir):
+        assest_path =[f"{zipped_dir}"]
+        github_utils.create_release(
+        repo_name=id,
+        asset_paths=assest_path,
+        )
+        print(f"Updated asset to {id}")
+
     def main(self):
         self.pechas_catalog = self.set_up_logger("pechas_catalog")
         self.alignment_catalog =self.set_up_logger("alignment_catalog")
@@ -373,33 +401,32 @@ class LHParser(Alignment):
             pecha_links = links[link]
             
             for pecha_link in pecha_links:
-                print(self.start_url+pecha_link)
-                alignment = self.parse_page(self.start_url+pecha_link)
+                """ alignment = self.parse_page(self.start_url+pecha_link)
                 for pecha_id in self.pecha_ids:
                     lang,pechaid =pecha_id
                     self.pechas_catalog.info(f"{pechaid},{lang},{self.pecha_name}")
                 if bool(alignment):
-                    print("HAS ALIGNMENT")
-                    alignment_id,zipped_path = self.get_alignment(self.pecha_ids,self.pecha_name,alignment)
-                break
+                    alignment_id,zipped_path = self.get_alignment(alignment) """
 
-                """ try:
-                    pecha_ids,pecha_name,alignment = self.parse_page(self.start_url+pecha_link)
-                    for pecha_id in pecha_ids:
+
+                try:
+                    alignment = self.parse_page(self.start_url+pecha_link)
+                    for pecha_id in self.pecha_ids:
                         lang,pechaid =pecha_id
-                        self.pechas_catalog.info(f"{pechaid},{lang},{pecha_name}")
-                        #publish_opf(pechaid)
+                        self.publish_opf(f"{self.root_opf_path}/{pechaid}")
+                        self.pechas_catalog.info(f"{pechaid},{lang},{self.pecha_name},https://github.com/OpenPecha/{pechaid}")
                 except:
                     self.err_log.info(f"main error: {self.start_url+pecha_link}")
                     pass
             
                 if bool(alignment):
                     try:
-                        alignment_id,zipped_path = self.create_alignment(pecha_ids,pecha_name,alignment)
-                        #publish_opf(alignment_id)
-                        #create_realease(alignment_id,zipped_path)
+                        alignment_id,zipped_path = self.get_alignment(alignment) 
+                        self.publish_opf(f"{self.root_opa_path}/{alignment_id}")
+                        self.create_realease(alignment_id,zipped_path)
+                        self.alignment_catalog.info(f"{alignment_id},{self.pecha_name},https://github.com/OpenPecha/{alignment_id}")
                     except:
-                        self.err_log.info(f"alignment error: {pecha_name}") """
+                        self.err_log.info(f"alignment error: {self.pecha_name}")
 
 
 if __name__ == "__main__":
