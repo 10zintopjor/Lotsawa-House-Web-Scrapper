@@ -5,13 +5,13 @@ from pydoc import pager
 from socket import has_dualstack_ipv6
 from urllib import response
 from bs4 import BeautifulSoup
-from openpecha.core.ids import get_initial_pecha_id
+from openpecha.core.ids import get_initial_pecha_id,get_base_id
 from openpecha.core.layer import Layer, LayerEnum
 from openpecha.core.pecha import OpenPechaFS 
 from openpecha.core.annotation import AnnBase, Span
 from openpecha import github_utils,config
 from openpecha.core.metadata import InitialPechaMetadata,InitialCreationType
-
+from serialize_to_tmx import Tmx
 from datetime import datetime
 from uuid import uuid4
 from index import Alignment
@@ -69,8 +69,8 @@ class LHParser(Alignment):
 
     def parse_page(self,url):
         page_meta={}
-        chapter_subtitle_map = {}
         has_alignment = {}
+        base_chapter_map =[]
         page = self.make_request(url)
         lang_elems = page.select('p#lang-list a')
         langs = [lang_elem.text for lang_elem in lang_elems]
@@ -82,50 +82,49 @@ class LHParser(Alignment):
             })
         main_div = page.find('div',{'id':'content'})
         headings = main_div.find_all('h4')
-        root_path=f"./opfs/{page.select_one('div#content h1').text}"
         print(self.pecha_name)
+        order = 1
+        if not headings:
+            chapter_elems = main_div.select('div.index-container > ul > li > a:first-child')
+            h_a,base_chapter_map,order= self.get_chapters(chapter_elems,order)
+            has_alignment.update(h_a)
+
         for heading in headings:
             if heading.get_text() == "Related Topics":
                 continue
             chapter_elems = heading.find_next_sibling('div').select('ul > li > a:first-child')
             heading_title = heading.get_text()
-            c_s_m,h_a = self.get_chapters(chapter_elems,heading_title)
-            chapter_subtitle_map.update(c_s_m)
-            has_alignment.update(h_a)        
-        
-        if not headings:
-            chapter_elems = main_div.select('div.index-container > ul > li > a:first-child')
-            c_s_m,h_a = self.get_chapters(chapter_elems)
-            chapter_subtitle_map.update(c_s_m)
+            h_a,b_c,order = self.get_chapters(chapter_elems,order,heading_title)
+            base_chapter_map.extend(b_c)
             has_alignment.update(h_a) 
-
-        page_meta.update({"chapter_subtitle":chapter_subtitle_map})
+        
         for pecha_id in self.pecha_ids:
-            lang,pechaid = pecha_id
-            self.create_meta(pechaid,page_meta,lang)
-            self.create_readme(pechaid,lang)
+            self.create_meta(pecha_id,page_meta,base_chapter_map)
+            self.create_readme(pecha_id)
 
         return has_alignment
 
 
-    def get_chapters(self,chapter_elems,heading_title=None):
-        chapter_subtitle_map = {}
+    def get_chapters(self,chapter_elems,order,heading_title=None):
         has_alignment = {}
+        base_chapter_map = []
         for chapter_elem in chapter_elems:
-            chapter_subtitle_map.update({chapter_elem.text:heading_title})
+            base_id = get_base_id()
+            chapter = chapter_elem.text
+            base_chapter_map.append([base_id,chapter,order,heading_title])
             href = chapter_elem['href']
             base_text,bool_alignment = self.get_text(self.start_url+href)
             if bool_alignment:
-                has_alignment.update({chapter_elem.text:bool_alignment})
+                has_alignment.update({base_id:bool_alignment})
             for pecha_id in self.pecha_ids:
                 language,pechaid = pecha_id
                 if language in base_text:
-                    chapter = chapter_elem.text
                     try:
-                        self.create_opf(pechaid,base_text[language],chapter)
+                        self.create_opf(pechaid,base_text[language],base_id)
                     except:
                         self.err_log.info(f"Opf Error : {self.pecha_name}:{chapter}:{language}") 
-        return chapter_subtitle_map,has_alignment
+            order+=1
+        return has_alignment,base_chapter_map,order
 
 
     def get_text(self,url):
@@ -205,39 +204,43 @@ class LHParser(Alignment):
         segment_annotation = {uuid4().hex:AnnBase(span=Span(start=start,end=end))}
         return (segment_annotation,end+2)
 
-    def create_meta(self,pecha_id,page_meta,lang):
-        opf_path = f"{self.root_opf_path}/{pecha_id}/{pecha_id}.opf"
-        print(opf_path)
+    def create_meta(self,pecha_id,page_meta,base_chapter_map):
+        lang,pechaid = pecha_id
+        opf_path = f"{self.root_opf_path}/{pechaid}/{pechaid}.opf"
         opf = OpenPechaFS(path=opf_path)
-        vol_meta = self.get_volume_meta(page_meta['chapter_subtitle'])
+        base_meta = self.get_base_meta(base_chapter_map)
         instance_meta = InitialPechaMetadata(
-            id=pecha_id,
+            id=pechaid,
             initial_creation_type=InitialCreationType.input,
             source_metadata={
                 "title":page_meta['main_title'],
                 "language": lang,
                 "description":page_meta["description"],
-                "volume":vol_meta
+                "volume":base_meta
             })    
 
         opf._meta = instance_meta
         opf.save_meta()
 
-    def create_readme(self,pecha_id,lang):
-        id = f"|pecha id | {pecha_id}"
+    def create_readme(self,pecha_id):
+        lang,pechaid = pecha_id
+        id = f"|pecha id | {pechaid}"
         Table = "| --- | --- "
         Title = f"|Title | {self.pecha_name} "
         language = f"|Languages | {lang}"
         readme = f"{id}\n{Table}\n{Title}\n{language}"
-        Path(f"{self.root_opf_path}/{pecha_id}/readme.md").write_text(readme)
+        Path(f"{self.root_opf_path}/{pechaid}/readme.md").write_text(readme)
 
 
-    def get_volume_meta(self,chapter_subtitle):
+    def get_base_meta(self,base_chapter_map):
         meta={}
-        for chapter in chapter_subtitle:
-            meta.update({uuid4().hex:{
+        for base_cahapter in base_chapter_map:
+            base_id,chapter,order,parent = base_cahapter
+            meta.update({base_id:{
                 "title":chapter,
-                "parent": chapter_subtitle[chapter],
+                "base_file": f"{base_id}.txt",
+                "order":order,
+                "parent": parent,
             }}) 
 
         return meta
@@ -309,11 +312,8 @@ class LHParser(Alignment):
         alignment_id,alignment_vol_map = self.create_alignment(pecha_ids,pecha_name,alignment)
         self.alignment_catalog.info(f"{alignment_id},{pecha_name}")
         self.create_csv(alignment_id,pecha_ids)
-        tmx_path = Path(f"./tmx/{pecha_name}")
-        self._mkdir(tmx_path)
-        self.create_tmx(alignment_vol_map,tmx_path)
-        zip_path = self.create_tmx_zip(tmx_path,pecha_name)
-        return alignment_id,zip_path
+        tmx_zip_path = self.create_tmx(alignment_vol_map)
+        return alignment_id,tmx_zip_path
 
     def create_csv(self,alignment_id,pecha_ids):
         filename = ""
@@ -330,14 +330,19 @@ class LHParser(Alignment):
                 url = f"https://github.com/OpenPecha/{pechaid}"
                 writer.writerow([pechaid,lang,url])
 
-    def create_tmx(self,alignment_vol_map,tmx_path):
+    def create_tmx(self,alignment_vol_map):
+        tmxObj = Tmx(self.root_opf_path,self.root_tmx_path)
+        tmx_path = f"{self.root_tmx_path}/{self.pecha_name}"
+        self._mkdir(Path(tmx_path))
         for map in alignment_vol_map:
             alignment,volume = map   
-            serialize_to_tmx.create_tmx(alignment,volume,tmx_path,self.root_path)
+            tmxObj.create_tmx(alignment,volume,tmx_path)
+        zip_path = self.create_tmx_zip(tmx_path)
+        return zip_path    
 
 
-    def create_tmx_zip(self,tmx_path,pecha_name):
-        zip_path = f"{self.root_path}/{pecha_name}.zip"
+    def create_tmx_zip(self,tmx_path):
+        zip_path = f"{self.root_tmx_path}/{self.pecha_name}_tmx.zip"
         zipObj = ZipFile(zip_path, 'w')
         tmxs = list(Path(f"{tmx_path}").iterdir())
         for tmx in tmxs:
@@ -376,7 +381,6 @@ class LHParser(Alignment):
                 if bool(alignment):
                     print("HAS ALIGNMENT")
                     alignment_id,zipped_path = self.get_alignment(self.pecha_ids,self.pecha_name,alignment)
-
                 break
 
                 """ try:

@@ -140,18 +140,18 @@ class Alignment:
    
 
     def write_alignment_repo(self,alignment_path,alignment,meta=None):
-        alignment_path = Path(f"{alignment_path}")
+        alignment_path = Path(alignment_path)
         self._mkdir(alignment_path)
         dump_yaml(alignment, Path(f"{alignment_path}/Alignment.yml"))
         if meta:
             dump_yaml(meta, Path(f"{alignment_path}/meta.yml"))
 
 
-    def create_alignment_meta(self,alignment_id,volume,language):
+    def create_alignment_meta(self,alignment_id,base,language):
         
         metadata = {
             "id": alignment_id,
-            "title": volume,
+            "base_file": f"{base}.txt",
             "type": "translation",
             "source_metadata":{
                 "languages":language,
