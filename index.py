@@ -15,15 +15,16 @@ from datetime import date, datetime
 
 class Alignment:
     def __init__(self,path):
-        self.root_path = path
+        self.root_opa_path = f"{path}/opas"
+        self.root_opf_path = f"{path}/opfs"
 
-    def create_alignment_yml(self,pecha_ids,volume,al):
-        self.seg_pairs = self.get_segment_pairs(pecha_ids,volume,al[volume])
+    def create_alignment_yml(self,pecha_ids,volume,alignment):
+        self.seg_pairs = self.get_segment_pairs(pecha_ids,volume,alignment[volume])
         self.segment_sources = {}
         language = []
         for pecha_id in pecha_ids:
             lang,pechaid = pecha_id
-            if lang not in al[volume]:
+            if lang not in alignment[volume]:
                 continue
             source = {
                 pechaid:{
@@ -52,7 +53,7 @@ class Alignment:
         for pecha_id in pecha_ids:
             lang,pechaid = pecha_id
             if lang in lang_with_algnmt:
-                segment_layer_path = f"{self.root_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"
+                segment_layer_path = f"{self.root_opf_path}/{pechaid}/{pechaid}.opf/layers/{volume}/Segment.yml"
                 pecha_yaml = load_yaml(Path(segment_layer_path))
                 ids = self.get_ids(pecha_yaml["annotations"])
                 if lang == "bo":
@@ -75,7 +76,7 @@ class Alignment:
     def create_alignment(self,pecha_ids,pecha_name,al):
         volumes = self.get_volumes(pecha_ids)
         alignment_id = get_alignment_id()
-        alignment_path = f"{self.root_path}/{alignment_id}/{alignment_id}.opa"
+        alignment_path = f"{self.root_opa_path}/{alignment_id}/{alignment_id}.opa"
         alignment_vol_map=[]
         for volume in volumes:
             if volume not in al:
@@ -118,7 +119,7 @@ class Alignment:
                 pechaid = id
                 break
 
-        paths = list(Path(f"{self.root_path}/{pechaid}/{pechaid}.opf/base").iterdir())
+        paths = list(Path(f"{self.root_opf_path}/{pechaid}/{pechaid}.opf/base").iterdir())
         for path in sorted(paths):
             volumes.append(path.stem)
         return volumes
@@ -173,5 +174,5 @@ class Alignment:
         
         readme = f"{alignment}\n{Table}\n{Title}\n{type}\n{languages}"
         
-        Path(f"{self.root_path}/{alignment_id}/readme.md").touch(exist_ok=True)
-        Path(f"{self.root_path}/{alignment_id}/readme.md").write_text(readme)
+        Path(f"{self.root_opa_path}/{alignment_id}/readme.md").touch(exist_ok=True)
+        Path(f"{self.root_opa_path}/{alignment_id}/readme.md").write_text(readme)

@@ -273,7 +273,6 @@ def remove_endlines(text):
     prev = ''
     while prev != text.strip("\n"):
         prev =text.strip("\n")
-
     return prev    
 
 
