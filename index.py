@@ -49,7 +49,7 @@ class Alignment:
         pair= {}
         seg_pairs = {}
         segment_length = ""
-
+        last_seg_len = ""
         for pecha_id in pecha_ids:
             lang,pechaid = pecha_id
             if lang in lang_with_algnmt:
@@ -59,10 +59,11 @@ class Alignment:
                 if lang == "bo":
                     segment_length = len(ids)
                 segments_ids[pechaid]= ids
+                last_seg_len = len(ids)
  
         if segment_length == "":
-            return seg_pairs
-
+            segment_length = last_seg_len
+        
         for num in range(1,segment_length+1):
             for pecha_id in pecha_ids:
                 lang,pechaid = pecha_id

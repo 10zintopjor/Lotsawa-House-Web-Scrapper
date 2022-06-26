@@ -71,6 +71,8 @@ class LHParser(Alignment):
         page_meta={}
         has_alignment = {}
         base_chapter_map =[]
+        order = 1
+
         page = self.make_request(url)
         lang_elems = page.select('p#lang-list a')
         langs = [lang_elem.text for lang_elem in lang_elems]
@@ -83,7 +85,6 @@ class LHParser(Alignment):
         main_div = page.find('div',{'id':'content'})
         headings = main_div.find_all('h4')
         print(self.pecha_name)
-        order = 1
         if not headings:
             chapter_elems = main_div.select('div.index-container > ul > li > a:first-child')
             h_a,base_chapter_map,order= self.get_chapters(chapter_elems,order)
@@ -99,7 +100,8 @@ class LHParser(Alignment):
             has_alignment.update(h_a) 
         
         for pecha_id in self.pecha_ids:
-            self.create_meta(pecha_id,page_meta,base_chapter_map)
+            lang,pechaid = pecha_id
+            self.create_meta(pecha_id,page_meta,base_chapter_map,has_alignment)
             self.create_readme(pecha_id)
 
         return has_alignment
@@ -139,17 +141,22 @@ class LHParser(Alignment):
         base_text = {}
         has_alignment = []
         lang_elems = page.select('p#lang-list a')
-        language_pages = [[lang_elem.text,lang_elem['href']] for lang_elem in lang_elems]
+        language_pages = [[self.get_lang_code(lang_elem.text),lang_elem['href']] for lang_elem in lang_elems]
         for language_page in language_pages:
-            language,href = language_page
-            lang_code = self.get_lang_code(language)
-            text,bool_alignment = self.extract_page_text(self.start_url+href,lang_code,has_alignment)
+            lang,href = language_page
+            text,bool_alignment = self.extract_page_text(self.start_url+href,lang,has_alignment)
             if bool_alignment == True:
-                has_alignment.append(lang_code) 
-            base_text.update({lang_code :text})
-            source_file[lang_code] = self.get_page(self.start_url+href)
+                has_alignment.append(lang) 
+            base_text.update({lang :text})
+            source_file[lang] = self.get_page(self.start_url+href)
         if has_alignment:
             has_alignment.append("bo")
+        elif len(language_pages) > 2:
+            for language_page in language_pages:
+                lang,href = language_page
+                if lang != "bo":
+                    has_alignment.append(lang)
+
         return base_text,has_alignment,source_file
 
     def get_page(self,url):
@@ -169,6 +176,8 @@ class LHParser(Alignment):
             if children.has_attr('class'):
                 if children['class'][0] in ('HeadingTib','TibetanVerse','TibetanExplanation') and lang_code != "bo":
                     has_alignment=True
+                    continue
+                elif children['class'][0] == "EnglishPhonetics":
                     continue
             if text in ("Bibliography","Bibliographie"):
                 break
@@ -215,11 +224,11 @@ class LHParser(Alignment):
         segment_annotation = {uuid4().hex:AnnBase(span=Span(start=start,end=end))}
         return (segment_annotation,end+2)
 
-    def create_meta(self,pecha_id,page_meta,base_chapter_map):
+    def create_meta(self,pecha_id,page_meta,base_chapter_map,has_alignment):
         lang,pechaid = pecha_id
         opf_path = f"{self.root_opf_path}/{pechaid}/{pechaid}.opf"
         opf = OpenPechaFS(path=opf_path)
-        base_meta = self.get_base_meta(base_chapter_map)
+        base_meta = self.get_base_meta(base_chapter_map,has_alignment)
         instance_meta = InitialPechaMetadata(
             id=pechaid,
             source =self.start_url,
@@ -244,10 +253,12 @@ class LHParser(Alignment):
         Path(f"{self.root_opf_path}/{pechaid}/readme.md").write_text(readme)
 
 
-    def get_base_meta(self,base_chapter_map):
+    def get_base_meta(self,base_chapter_map,has_alignment):
         meta={}
-        for base_cahapter in base_chapter_map:
-            base_id,chapter,order,parent = base_cahapter
+        for base_chapter in base_chapter_map:
+            base_id,chapter,order,parent = base_chapter
+            if base_id not in has_alignment.keys():
+                continue
             meta.update({base_id:{
                 "title":chapter,
                 "base_file": f"{base_id}.txt",
@@ -320,8 +331,8 @@ class LHParser(Alignment):
 
         return code
 
-    def get_alignment(self,alignment):
-        alignment_id,alignment_vol_map = self.create_alignment(self.pecha_ids,self.pecha_name,alignment)
+    def get_alignment(self,has_alignment):
+        alignment_id,alignment_vol_map = self.create_alignment(self.pecha_ids,self.pecha_name,has_alignment)
         self.create_csv(alignment_id,self.pecha_ids)
         tmx_zip_path = self.create_tmx(alignment_vol_map)
         return alignment_id,tmx_zip_path
@@ -394,39 +405,37 @@ class LHParser(Alignment):
         self.err_log = self.set_up_logger('err')
         translation_page = self.parse_home(self.start_url)
         links = self.get_links(translation_page)
-
+        bool_try = None
         for link in links:
             main_title = link
-            print(main_title)
-            pecha_links = links[link]
+            pecha_links = links[link] 
             
             for pecha_link in pecha_links:
-                """ alignment = self.parse_page(self.start_url+pecha_link)
-                for pecha_id in self.pecha_ids:
-                    lang,pechaid =pecha_id
-                    self.pechas_catalog.info(f"{pechaid},{lang},{self.pecha_name}")
-                if bool(alignment):
-                    alignment_id,zipped_path = self.get_alignment(alignment) """
-
-
+                if self.start_url+pecha_link == "https://www.lotsawahouse.org/topics/bodhicharyavatara":
+                    bool_try = True
+                else:
+                    bool_try = False
+                if not bool_try:
+                    continue   
+                
                 try:
-                    alignment = self.parse_page(self.start_url+pecha_link)
+                    has_alignment = self.parse_page(self.start_url+pecha_link)
                     for pecha_id in self.pecha_ids:
                         lang,pechaid =pecha_id
-                        self.publish_opf(f"{self.root_opf_path}/{pechaid}")
+                        #self.publish_opf(f"{self.root_opf_path}/{pechaid}")
                         self.pechas_catalog.info(f"{pechaid},{lang},{self.pecha_name},https://github.com/OpenPecha/{pechaid}")
-                except:
-                    self.err_log.info(f"main error: {self.start_url+pecha_link}")
+                except Exception as e:
+                    self.err_log.info(f"main error: {self.start_url+pecha_link} , {e}")
                     pass
             
-                if bool(alignment):
+                if bool(has_alignment):
                     try:
-                        alignment_id,zipped_path = self.get_alignment(alignment) 
-                        self.publish_opf(f"{self.root_opa_path}/{alignment_id}")
+                        alignment_id,zipped_path = self.get_alignment(has_alignment) 
+                        #self.publish_opf(f"{self.root_opa_path}/{alignment_id}")
                         self.create_realease(alignment_id,zipped_path)
                         self.alignment_catalog.info(f"{alignment_id},{self.pecha_name},https://github.com/OpenPecha/{alignment_id}")
-                    except:
-                        self.err_log.info(f"alignment error: {self.pecha_name}")
+                    except Exception as e:
+                        self.err_log.info(f"alignment error: {self.pecha_name} , {e}")
 
 
 if __name__ == "__main__":
