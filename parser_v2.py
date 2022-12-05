@@ -17,7 +17,7 @@ import re
 import requests
 import logging
 import csv
-
+from index import Alignment
 
 
 class LHParser(Alignment):
@@ -82,8 +82,12 @@ class LHParser(Alignment):
         main_div = collection_page.find('div',{'id':'content'})
         pecha_links = main_div.select('div.index-container ul li>a')
         for pecha_link in pecha_links:
-            self.parse_page_content(self.start_url+pecha_link.get("href"))
-
+            parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link)
+            if has_alignment:
+                self.create_opa(parrallel_pechas,pecha_name)
+    
+    def create_opa(self,parrallel_pechas:list,pecha_name):
+        self.create_alignment(parrallel_pechas,pecha_name)
 
     def get_lang_code(self,lang):
         code = ""
@@ -110,24 +114,87 @@ class LHParser(Alignment):
 
         return code
 
-    def parse_page_content(self,url):
-        page = self.make_request(url)
+    def parse_page_content(self,pecha_link):
+        page = self.make_request(self.start_url+pecha_link.get("href"))
+        pecha_name = pecha_link.text
         source_file = {}
         base_texts = []
         has_alignment = False
         lang_elems = page.select('p#lang-list a')
         language_pages = [[self.get_lang_code(lang_elem.text),lang_elem['href']] for lang_elem in lang_elems]
-
+        languages = []
         for language_page in language_pages:
             lang,href = language_page
+            languages.append(lang)
             base_text,has_alignment = self.extract_page_text(self.start_url+href,lang,has_alignment)
             base_texts.append(base_text)
 
         if has_alignment:
-            it = iter(base_texts)
-            the_len = len(next(it))
-            if not all(len(l) == the_len for l in it):
-                raise ValueError('not all lists have same length')
+            self.verify_alignmnet(base_texts)
+            
+        parrallel_pechas = self.create_multlingual_opf(base_texts,languages)
+        return parrallel_pechas,has_alignment,pecha_name
+
+    @staticmethod
+    def verify_alignmnet(base_texts):
+        it = iter(base_texts)
+        the_len = len(next(it))
+        if not all(len(l) == the_len for l in it):
+            raise ValueError('not all lists have same length')
+
+    def create_multlingual_opf(self,base_texts:list,langs:list):
+        parrallel_pechas = []
+        for base_text,lang in zip(base_texts,langs):
+            pecha_id = get_initial_pecha_id()
+            base_id = get_base_id()
+            segment_annotaions = self.create_opf(pecha_id,base_id,base_text)
+            parrallel_pechas.append({
+            "pecha_id":pecha_id,
+            "base_id":base_id,
+            "annotations":segment_annotaions,
+            "lang":lang})
+        
+        return parrallel_pechas
+
+    def get_base_text(self,base_text_list:list):
+        base_text = base_text_list[0]
+        for text in base_text_list[1:]:
+            base_text+="\n"+text
+
+        return base_text
+
+    def create_opf(self,pecha_id:str,base_id:str,base_text_list:list):
+        opf_path = f"{self.root_opf_path}/{pecha_id}/{pecha_id}.opf"
+        base_text = self.get_base_text(base_text_list)
+        opf = OpenPechaFS(path=opf_path)
+        opf.bases = {base_id:base_text}
+        opf.save_base()
+        segment_layer,segment_annotations = self.get_segment_layer(base_text_list)
+        layers={f"{base_id}": {LayerEnum.segment: segment_layer}}
+        opf.layers = layers
+        opf.save_layers()
+        return segment_annotations
+
+    def get_segment_layer(self,base_text_list):
+        segment_annotations = {}
+        char_walker = 0 
+        for text in base_text_list:
+            if text == "":
+                continue
+            segment_annotation,char_walker = self.get_segment_annotation(char_walker,text) 
+            segment_annotations.update(segment_annotation)
+        segment_layer = Layer(annotation_type=LayerEnum.segment,annotations=segment_annotations)
+
+        return segment_layer,segment_annotations
+    
+    def get_segment_annotation(self,char_walker,text):
+
+        start = char_walker
+        end = char_walker +len(text)
+
+        segment_annotation = {uuid4().hex:AnnBase(span=Span(start=start,end=end))}
+        return (segment_annotation,end+1)
+
 
     @staticmethod
     def remove_endlines(text):
@@ -162,7 +229,7 @@ class LHParser(Alignment):
                 if elem['class'][0] in ('HeadingTib','TibetanVerse'):
                     base_text.append(text)
             else:
-                base_text.append(text)
+                base_text.append(text.strip())
         
         return base_text
 
@@ -201,16 +268,16 @@ class LHParser(Alignment):
             elif elem['class'][0] == "Heading3":
                 heading+=" "+text
                 continue
-            base_text.append(text)
+            base_text.append(text.strip())
         
         if heading:
-            base_text.insert(0,heading)
+            base_text.insert(0,heading.strip())
         return base_text
 
     def parse_nonaligned_page(self,elems):
         base_text = []
         for elem in elems:
-            base_text.append(elem.text)
+            base_text.append(elem.text.strip())
         return base_text
 
     def parse_non_tibetan_page(self,elems):
