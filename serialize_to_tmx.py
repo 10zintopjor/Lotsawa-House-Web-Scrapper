@@ -11,13 +11,13 @@ class Tmx:
         self.root_opf_path = root_opf_path
         self.root_tmx_path =  root_tmx_path
 
-    def create_body(self,body,seg_pairs,pecha_langs,volume):
+    def create_body(self,body,seg_pairs,pecha_langs,segment_sources):
         for seg_id in seg_pairs:
             tu =ElementTree.SubElement(body,'tu',{"seg_id":seg_id})
             for elem in seg_pairs[seg_id]:
                 pecha_id = elem
                 segment_id = seg_pairs[seg_id][elem]
-                text = self.get_text(pecha_id,segment_id,volume)
+                text = self.get_text(pecha_id,segment_id,segment_sources["pecha_id"]["base"])
                 if text!="":
                     tuv = ElementTree.SubElement(tu,"tuv",{"xml:lang":pecha_langs[pecha_id],"creationdate":str(datetime.datetime.now()),"creationid":"esukhia"})     
                     tuv.text=text
@@ -49,18 +49,19 @@ class Tmx:
 
         return base_text[start:end+1]
 
-    def create_main(self,seg_pairs,pecha_langs,volume,tmx_path):
+    def create_main(self,seg_pairs,pecha_langs,segment_sources):
         root = ElementTree.Element('tmx')
         ElementTree.SubElement(root,'header',{"datatype":"Text","creationdate":str(datetime.datetime.now())})
         body = ElementTree.SubElement(root,'body')
-        self.create_body(body,seg_pairs,pecha_langs,volume)
+        self.create_body(body,seg_pairs,pecha_langs,segment_sources)
         tree = self.prettify(root)
         return tree
 
-    def create_tmx(self,alignment,volume,tmx_path):
+    def create_tmx(self,alignment,tmx_path):
         seg_pairs = alignment['segment_pairs']
+        segment_sources = alignment["segment_sources"]
         pecha_langs = self.get_pecha_langs(alignment['segment_sources'])
-        tree = self.create_main(seg_pairs,pecha_langs,volume,tmx_path)
+        tree = self.create_main(seg_pairs,pecha_langs,segment_sources)
         Path(f"{tmx_path}/{volume}.tmx").write_text(tree)   
 
 

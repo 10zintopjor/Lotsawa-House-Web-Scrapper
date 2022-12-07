@@ -17,6 +17,7 @@ import re
 import requests
 import logging
 import csv
+import os
 from index import Alignment
 
 
@@ -82,12 +83,33 @@ class LHParser(Alignment):
         main_div = collection_page.find('div',{'id':'content'})
         pecha_links = main_div.select('div.index-container ul li>a')
         for pecha_link in pecha_links:
+            alignment_id=""
             parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link)
             if has_alignment:
-                self.create_opa(parrallel_pechas,pecha_name)
+                alignment_id,alignments = self.create_alignment(parrallel_pechas,pecha_name)
+            self.write_catalog(parrallel_pechas,alignment_id,pecha_name)
+            self.create_tmx(alignments,pecha_name)
     
-    def create_opa(self,parrallel_pechas:list,pecha_name):
-        self.create_alignment(parrallel_pechas,pecha_name)
+    def create_tmx(self,alignments,pecha_name):
+        tmxObj = Tmx(self.root_opf_path,self.root_tmx_path)
+        tmx_path = f"{self.root_tmx_path}/{pecha_name}"
+        self._mkdir(Path(tmx_path))
+        tmxObj.create_tmx(alignments,tmx_path)
+
+
+    def write_catalog(self,parallel_pechas,alignment_id,pecha_name):
+        github_link = "https://github.com/OpenPecha-Data/"
+        if not os.path.exists("catalog"):
+            self._mkdir(Path("catalog"))
+        with open(f"catalog/alignment.csv","a") as f:
+            writer = csv.writer(f)
+            writer.writerow([alignment_id,pecha_name,github_link+alignment_id])
+
+        for pecha in parallel_pechas:
+            with open(f"catalog/pecha.csv","a") as f:
+                writer = csv.writer(f)
+                writer.writerow([pecha["pecha_id"],pecha["lang"],pecha_name,github_link+pecha["pecha_id"]])
+
 
     def get_lang_code(self,lang):
         code = ""
@@ -117,7 +139,7 @@ class LHParser(Alignment):
     def parse_page_content(self,pecha_link):
         page = self.make_request(self.start_url+pecha_link.get("href"))
         pecha_name = pecha_link.text
-        source_file = {}
+        page_urls = []
         base_texts = []
         has_alignment = False
         lang_elems = page.select('p#lang-list a')
@@ -125,14 +147,16 @@ class LHParser(Alignment):
         languages = []
         for language_page in language_pages:
             lang,href = language_page
-            languages.append(lang)
             base_text,has_alignment = self.extract_page_text(self.start_url+href,lang,has_alignment)
             base_texts.append(base_text)
+            languages.append(lang)
+            page_urls.append(self.start_url+href)
+
 
         if has_alignment:
             self.verify_alignmnet(base_texts)
             
-        parrallel_pechas = self.create_multlingual_opf(base_texts,languages)
+        parrallel_pechas = self.create_multlingual_opf(base_texts,languages,page_urls)
         return parrallel_pechas,has_alignment,pecha_name
 
     @staticmethod
@@ -142,12 +166,13 @@ class LHParser(Alignment):
         if not all(len(l) == the_len for l in it):
             raise ValueError('not all lists have same length')
 
-    def create_multlingual_opf(self,base_texts:list,langs:list):
+    def create_multlingual_opf(self,base_texts:list,langs:list,page_urls:list):
         parrallel_pechas = []
-        for base_text,lang in zip(base_texts,langs):
+        for base_text,lang,page_url in zip(base_texts,langs,page_urls):
             pecha_id = get_initial_pecha_id()
             base_id = get_base_id()
             segment_annotaions = self.create_opf(pecha_id,base_id,base_text)
+            self.create_source_file(pecha_id,page_url,base_id)
             parrallel_pechas.append({
             "pecha_id":pecha_id,
             "base_id":base_id,
@@ -175,6 +200,11 @@ class LHParser(Alignment):
         opf.save_layers()
         return segment_annotations
 
+    def create_source_file(self,pecha_id,page_url,base_id):
+        page_html = requests.get(page_url)
+        self._mkdir(Path(f"{self.root_opf_path}/{pecha_id}/Source"))
+        Path(f"{self.root_opf_path}/{pecha_id}/Source/{base_id}.html").write_text(page_html.text)
+
     def get_segment_layer(self,base_text_list):
         segment_annotations = {}
         char_walker = 0 
@@ -187,11 +217,11 @@ class LHParser(Alignment):
 
         return segment_layer,segment_annotations
     
+
     def get_segment_annotation(self,char_walker,text):
 
         start = char_walker
         end = char_walker +len(text)
-
         segment_annotation = {uuid4().hex:AnnBase(span=Span(start=start,end=end))}
         return (segment_annotation,end+1)
 
