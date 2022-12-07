@@ -7,7 +7,6 @@ from openpecha.core.ids import get_base_id
 from openpecha.utils import dump_yaml, load_yaml
 
 
-
 class Alignment:
     def __init__(self,path):
         self.root_opa_path = f"{path}/opas"
@@ -22,7 +21,7 @@ class Alignment:
                     "type": "origin_type",
                     "relation": "translation",
                     "language": pecha["lang"],
-                    "base":f"{pecha['base_id']}.txt"
+                    "base":f"{pecha['base_id']}"
                 }
             }
             segment_sources.update(source)
@@ -58,7 +57,7 @@ class Alignment:
         self._mkdir(Path(alignment_path))
         base_id = get_base_id()
         alignments = self.create_alignment_yml(parrallel_pechas)
-        meta = self.create_alignment_meta(alignment_id,parrallel_pechas,base_id)
+        meta = self.create_alignment_meta(alignment_id,parrallel_pechas,base_id,pecha_name)
         dump_yaml(alignments,Path(f"{alignment_path}/{base_id}.yml"))
         dump_yaml(meta,Path(f"{alignment_path}/meta.yml"))
         self.create_readme_for_opa(alignment_id,pecha_name,parrallel_pechas) 
@@ -70,8 +69,11 @@ class Alignment:
         return path
 
 
-    def create_alignment_meta(self,alignment_id,parallel_pechas,base_id):
-        alignment_map = [{f"{pecha['pecha_id']}/{pecha['base_id']}":base_id} for pecha in parallel_pechas]
+    def create_alignment_meta(self,alignment_id,parallel_pechas,base_id,pecha_name):
+        alignment_map = {}
+        for pecha in parallel_pechas:
+            alignment_map.update({f"{pecha['pecha_id']}/{pecha['base_id']}":base_id})
+
         pechas_ids = [pecha["pecha_id"] for pecha in parallel_pechas]
         langs = [pecha["lang"] for pecha in parallel_pechas]
         metadata = {
@@ -79,11 +81,12 @@ class Alignment:
             "type": "translation",
             "pechas":pechas_ids,
             "source_metadata":{
+                "title":pecha_name,
                 "languages":langs,
                 "datatype":"PlainText",
                 "created_at":datetime.now(),
                 "last_modified_at":datetime.now(),
-                "alignment_map":alignment_map
+                "alignment_to_base":alignment_map
                 },
         }
         return metadata
