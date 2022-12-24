@@ -21,18 +21,20 @@ import logging
 import csv
 import os
 from index import Alignment
-
+from progressbar import ProgressBar
+from tqdm import tqdm
+pbar = ProgressBar()
 
 class LHParser(Alignment):
     start_url = 'https://www.lotsawahouse.org'
-    root_path = "./root"
+    root_path = "./zot_dir"
 
-    def __init__(self,root_path):
-        self.root_opf_path = f"{root_path}/opfs"
-        self.root_tmx_path = f"{root_path}/tmx"
-        self.root_tmx_zip_path = f"{root_path}/tmxZip"
-        self.root_source_path = f"{root_path}/source"
-        super().__init__(root_path)
+    def __init__(self):
+        self.root_opf_path = f"{self.root_path}/opfs"
+        self.root_tmx_path = f"{self.root_path}/tmx"
+        self.root_tmx_zip_path = f"{self.root_path}/tmxZip"
+        self.root_source_path = f"{self.root_path}/source"
+        super().__init__(self.root_path)
 
     @staticmethod
     def make_request(url):
@@ -83,19 +85,14 @@ class LHParser(Alignment):
         self.collection_name = collection_page.select_one('div#content h1').text
         self.collection_description = collection_page.select_one("div#content b").text.strip("\n")
         main_div = collection_page.find('div',{'id':'content'})
-        pecha_links = main_div.select('div.index-container ul li>a')
+        pecha_links = main_div.select('div.index-container ul li>a:first-child')
         for pecha_link in pecha_links:
             alignment_id=""
-            try:
-                parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link)
-            except:
-                self.err_log(pecha_link)
-                continue
-
+            parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link.get("href"),pecha_link.text)
             if has_alignment:
                 alignment_id,alignments = self.create_alignment(parrallel_pechas,pecha_name)
                 tmx_path = self.create_tmx(alignments,pecha_name)
-                #publish_repo(Path(f"{self.root_opa_path}/{alignment_id}"),asset_paths=[Path(tmx_path)])
+                publish_repo(Path(f"{self.root_opa_path}/{alignment_id}"),asset_paths=[Path(tmx_path)])
                 self.alignment_catalog.info(f"{alignment_id},{pecha_name},https://github.com/OpenPecha-Data/{alignment_id}")
     
     def create_tmx(self,alignments,pecha_name):
@@ -129,9 +126,8 @@ class LHParser(Alignment):
 
         return code
 
-    def parse_page_content(self,pecha_link):
-        page = self.make_request(self.start_url+pecha_link.get("href"))
-        pecha_name = pecha_link.text
+    def parse_page_content(self,pecha_link,pecha_name):
+        page = self.make_request(self.start_url+pecha_link)
         page_urls = []
         base_texts = []
         has_alignment = False
@@ -163,10 +159,10 @@ class LHParser(Alignment):
         for base_text,lang,page_url in zip(base_texts,langs,page_urls):
             pecha_id = get_initial_pecha_id()
             base_id = get_base_id()
-            segment_annotaions = self.create_opf(pecha_id,base_id,base_text,pecha_name)
+            segment_annotaions = self.create_opf(pecha_id,base_id,base_text,pecha_name,lang)
             self.create_readme(lang,pecha_name,pecha_id)
             source_file_path = self.create_source_file(pecha_id,page_url,base_id)
-            #publish_repo(Path(f"{self.root_opf_path}/{pecha_id}"),asset_paths=[Path(source_file_path)])
+            publish_repo(Path(f"{self.root_opf_path}/{pecha_id}"),asset_paths=[Path(source_file_path)])
             self.pechas_catalog.info(f"{pecha_id},{pecha_name},https://github.com/OpenPecha-Data/{pecha_id}")
             parrallel_pechas.append({
             "pecha_id":pecha_id,
@@ -194,32 +190,34 @@ class LHParser(Alignment):
 
         return base_text
 
-    def create_opf(self,pecha_id:str,base_id:str,base_text_list:list,pecha_name:str):
+    def create_opf(self,pecha_id:str,base_id:str,base_text_list:list,pecha_name:str,lang:str):
         opf_path = f"{self.root_opf_path}/{pecha_id}/{pecha_id}.opf"
         base_text = self.get_base_text(base_text_list)
         opf = OpenPechaFS(path=opf_path)
         opf.bases = {base_id:base_text}
         segment_layer,segment_annotations = self.get_segment_layer(base_text_list)
         opf.layers ={f"{base_id}": {LayerEnum.segment: segment_layer}}
-        opf._meta = self.get_metadata(pecha_id,pecha_name,base_id)
+        opf._meta = self.get_metadata(pecha_id,pecha_name,base_id,lang)
         opf.save_base()
         opf.save_layers()
         opf.save_meta()
     
         return segment_annotations
 
-    def get_metadata(self,pecha_id,pecha_name,base_id):
+    def get_metadata(self,pecha_id,pecha_name,base_id,lang):
         meta = InitialPechaMetadata(
             id=pecha_id,
             source = self.start_url,
             initial_creation_type=InitialCreationType.input,
+            default_language=lang,
             bases={
                 base_id:{"title":pecha_name,
                 "base_file":f"{base_id}.txt",
                 "order":1}
                     },
             source_metadata={
-                "title":pecha_name})
+                "collection":self.collection_name
+            })
         return meta
 
 
@@ -350,20 +348,23 @@ class LHParser(Alignment):
         translation_page = self.parse_home(self.start_url)
         links = self.get_links(translation_page)
         bool_try = None
-        for link in links:
-            main_title = link
-            pecha_links = links[link] 
-            
-            for pecha_link in pecha_links:
-                """ if self.start_url+pecha_link == "https://www.lotsawahouse.org/topics/bodhicharyavatara":
+        for link in tqdm(links):
+            pecha_links = links[link]   
+            for i,pecha_link in enumerate(pecha_links):
+                if i%200 == 0 and i!=0:
+                    shutil.rmtree("./zot_dir/")
+                """ if self.start_url+pecha_link == "https://www.lotsawahouse.org/tibetan-masters/adzom-drukpa/":
                     bool_try = True
                 else:
                     bool_try = False
                 if not bool_try:
-                    continue  """  
-                self.parse_collection(self.start_url+pecha_link)  
-                break
-            break
+                    continue  """
+                try:
+                    self.parse_collection(self.start_url+pecha_link)
+                except:
+                    self.err_log.info(pecha_link)
+                print(pecha_link)
+                
 
 def publish_repo(pecha_path, asset_paths=None):
     github_utils.github_publish(
@@ -387,7 +388,9 @@ def publish_repo(pecha_path, asset_paths=None):
             token=os.environ.get("GITHUB_TOKEN")
         )
 if __name__ == "__main__":
-    obj = LHParser("./root")
+    obj = LHParser()
     obj.main()
+    #obj.parse_collection("https://www.lotsawahouse.org/tibetan-masters/lhundrup-tso/")
+    #obj.parse_page_content("/tibetan-masters/adeu-rinpoche/","test")
     #obj.parse_page_content("https://www.lotsawahouse.org/tibetan-masters/adeu-rinpoche/white-jambhala")
     #obj.parse_collection("https://www.lotsawahouse.org/tibetan-masters/dilgo-khyentse/")
