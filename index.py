@@ -78,10 +78,11 @@ class Alignment:
         langs = [pecha["lang"] for pecha in parallel_pechas]
         metadata = {
             "id": alignment_id,
+            "title":pecha_name,
             "type": "translation",
             "pechas":pechas_ids,
             "source_metadata":{
-                "title":pecha_name,
+                
                 "languages":langs,
                 "datatype":"PlainText",
                 "created_at":datetime.now(),

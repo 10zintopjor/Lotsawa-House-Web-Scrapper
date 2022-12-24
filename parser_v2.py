@@ -7,6 +7,7 @@ from openpecha.core.annotation import AnnBase, Span
 from openpecha import github_utils,config
 from openpecha.core.metadata import InitialPechaMetadata,InitialCreationType
 from serialize_to_tmx import Tmx
+from openpecha.github_utils import create_release,github_publish
 from datetime import datetime
 from uuid import uuid4
 from index import Alignment
@@ -14,6 +15,7 @@ from pathlib import Path
 from zipfile import ZipFile
 from index import Alignment
 import re
+import shutil
 import requests
 import logging
 import csv
@@ -29,6 +31,7 @@ class LHParser(Alignment):
         self.root_opf_path = f"{root_path}/opfs"
         self.root_tmx_path = f"{root_path}/tmx"
         self.root_tmx_zip_path = f"{root_path}/tmxZip"
+        self.root_source_path = f"{root_path}/source"
         super().__init__(root_path)
 
     @staticmethod
@@ -83,32 +86,23 @@ class LHParser(Alignment):
         pecha_links = main_div.select('div.index-container ul li>a')
         for pecha_link in pecha_links:
             alignment_id=""
-            parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link)
+            try:
+                parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link)
+            except:
+                self.err_log(pecha_link)
+                continue
+
             if has_alignment:
                 alignment_id,alignments = self.create_alignment(parrallel_pechas,pecha_name)
                 tmx_path = self.create_tmx(alignments,pecha_name)
-            self.write_catalog(parrallel_pechas,alignment_id,pecha_name)
+                #publish_repo(Path(f"{self.root_opa_path}/{alignment_id}"),asset_paths=[Path(tmx_path)])
+                self.alignment_catalog.info(f"{alignment_id},{pecha_name},https://github.com/OpenPecha-Data/{alignment_id}")
     
     def create_tmx(self,alignments,pecha_name):
         tmxObj = Tmx(self.root_opf_path,self.root_tmx_path)
         self._mkdir(Path(self.root_tmx_path))
         tmx_path = tmxObj.create_tmx(alignments,pecha_name.replace(" ","_"))
         return tmx_path
-
-    def write_catalog(self,parallel_pechas,alignment_id,pecha_name):
-        github_link = "https://github.com/OpenPecha-Data/"
-        if not os.path.exists("catalog"):
-            self._mkdir(Path("catalog"))
-        if alignment_id != "":
-            with open(f"catalog/alignment.csv","a") as f:
-                writer = csv.writer(f)
-                writer.writerow([alignment_id,pecha_name,github_link+alignment_id])
-
-        for pecha in parallel_pechas:
-            with open(f"catalog/pecha.csv","a") as f:
-                writer = csv.writer(f)
-                writer.writerow([pecha["pecha_id"],pecha["lang"],pecha_name,github_link+pecha["pecha_id"]])
-
 
     def get_lang_code(self,lang):
         code = ""
@@ -170,14 +164,28 @@ class LHParser(Alignment):
             pecha_id = get_initial_pecha_id()
             base_id = get_base_id()
             segment_annotaions = self.create_opf(pecha_id,base_id,base_text,pecha_name)
-            self.create_source_file(pecha_id,page_url,base_id)
+            self.create_readme(lang,pecha_name,pecha_id)
+            source_file_path = self.create_source_file(pecha_id,page_url,base_id)
+            #publish_repo(Path(f"{self.root_opf_path}/{pecha_id}"),asset_paths=[Path(source_file_path)])
+            self.pechas_catalog.info(f"{pecha_id},{pecha_name},https://github.com/OpenPecha-Data/{pecha_id}")
             parrallel_pechas.append({
             "pecha_id":pecha_id,
-            "base_id":base_id,
+            "base_id":base_id,  
             "annotations":segment_annotaions,
             "lang":lang})
+
         
         return parrallel_pechas
+    
+    def create_readme(self,lang,pecha_name,pecha_id):
+        Pecha_id = f"|Pecha id | {pecha_id}"
+        Table = "| --- | --- "
+        Title = f"|Title | {pecha_name} "
+        language = f"|Language | {lang}"
+        readme = f"{Pecha_id}\n{Table}\n{Title}\n{language}"
+        Path(f"{self.root_opf_path}/{pecha_id}/readme.md").touch(exist_ok=True)
+        Path(f"{self.root_opf_path}/{pecha_id}/readme.md").write_text(readme)
+
 
     def get_base_text(self,base_text_list:list):
         base_text = base_text_list[0]
@@ -197,13 +205,14 @@ class LHParser(Alignment):
         opf.save_base()
         opf.save_layers()
         opf.save_meta()
+    
         return segment_annotations
 
     def get_metadata(self,pecha_id,pecha_name,base_id):
         meta = InitialPechaMetadata(
             id=pecha_id,
             source = self.start_url,
-            initial_creation_type=InitialCreationType.web_scrap,
+            initial_creation_type=InitialCreationType.input,
             bases={
                 base_id:{"title":pecha_name,
                 "base_file":f"{base_id}.txt",
@@ -216,8 +225,10 @@ class LHParser(Alignment):
 
     def create_source_file(self,pecha_id,page_url,base_id):
         page_html = requests.get(page_url)
-        self._mkdir(Path(f"{self.root_opf_path}/{pecha_id}/Source"))
-        Path(f"{self.root_opf_path}/{pecha_id}/Source/{base_id}.html").write_text(page_html.text)
+        self._mkdir(Path(self.root_source_path))
+        source_file_path = f"{self.root_source_path}/{base_id}.html"
+        Path(source_file_path).write_text(page_html.text)
+        return source_file_path
 
     def get_segment_layer(self,base_text_list):
         segment_annotations = {}
@@ -350,56 +361,31 @@ class LHParser(Alignment):
                     bool_try = False
                 if not bool_try:
                     continue  """  
-                
                 self.parse_collection(self.start_url+pecha_link)  
                 break
             break
-    
-    def create_body(self,body,seg_pairs,pecha_langs,segment_sources):
-        for seg_id in seg_pairs:
-            tu =ElementTree.SubElement(body,'tu',{"seg_pair_id":seg_id})
-            for elem in seg_pairs[seg_id]:
-                pecha_id = elem
-                segment_id = seg_pairs[seg_id][elem]
-                text = self.get_text(pecha_id,segment_id,segment_sources[pecha_id]["base"])
-                if text!="":
-                    tuv = ElementTree.SubElement(tu,"tuv",{"xml:lang":pecha_langs[pecha_id]})     
-                    tuv.text=text
 
-
-    def get_text(self,pecha_id,seg_id,volume):
-        if seg_id == None:
-            return ""
-        else:
-            try:
-                pecha_path = f"{self.root_opf_path}/{pecha_id}/{pecha_id}.opf"    
-                base_text_path = f"{pecha_path}/base/{volume}.txt"
-                layer_path = f"{pecha_path}/layers/{volume}/Segment.yml"
-                segment_yml = load_yaml(Path(layer_path))
-            except:
-                return ""    
-            annotations = segment_yml.get("annotations",{})
-            for id in annotations:
-                if id == seg_id:
-                    span = annotations[id]['span']
-                    base_text = self.get_base_text(span,base_text_path)
-                    return base_text
-
-    def get_base_text(self,span,base_text_path):
-        base_text = Path(base_text_path).read_text()
-        start = span['start']
-        end = span['end']
-
-        return base_text[start:end+1]
-
-    def create_main(self,seg_pairs,pecha_langs,segment_sources):
-        root = ElementTree.Element('tmx')
-        ElementTree.SubElement(root,'header',{"datatype":"Text","creationdate":str(datetime.datetime.now())})
-        body = ElementTree.SubElement(root,'body')
-        self.create_body(body,seg_pairs,pecha_langs,segment_sources)
-        tree = self.prettify(root)
-        return tree
-        
+def publish_repo(pecha_path, asset_paths=None):
+    github_utils.github_publish(
+        pecha_path,
+        message="initial commit",
+        not_includes=[],
+        layers=[],
+        org=os.environ.get("OPENPECHA_DATA_GITHUB_ORG"),
+        token=os.environ.get("GITHUB_TOKEN")
+       )
+    if asset_paths:
+        repo_name = pecha_path.stem
+        #asset_name = asset_path.stem
+        #shutil.make_archive(asset_path.parent / asset_name, "zip", asset_path)
+        #asset_paths.append(f"{asset_path.parent / asset_name}.zip")
+        github_utils.create_release(
+            repo_name,
+            prerelease=False,
+            asset_paths=asset_paths, 
+            org=os.environ.get("OPENPECHA_DATA_GITHUB_ORG"),
+            token=os.environ.get("GITHUB_TOKEN")
+        )
 if __name__ == "__main__":
     obj = LHParser("./root")
     obj.main()
