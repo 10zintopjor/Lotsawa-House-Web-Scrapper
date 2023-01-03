@@ -50,7 +50,7 @@ def check_url():
 
 
 if __name__ == "__main__":
-     with open("alignment_catalog.csv","r") as f1:
+     with open("logs/pechas_catalog.csv","r") as f1:
         obj1 = csv.reader(f1)
         for row1 in obj1:
             get_ids(row1[0])

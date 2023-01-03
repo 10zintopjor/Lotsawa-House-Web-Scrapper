@@ -5,9 +5,9 @@ from openpecha.core.ids import get_initial_pecha_id,get_base_id
 from openpecha.core.layer import Layer, LayerEnum
 from openpecha.core.annotation import AnnBase, Span
 from openpecha import github_utils,config
+from openpecha.utils import load_yaml,dump_yaml
 from openpecha.core.metadata import InitialPechaMetadata,InitialCreationType
 from serialize_to_tmx import Tmx
-from openpecha.github_utils import create_release,github_publish
 from datetime import datetime
 from uuid import uuid4
 from index import Alignment
@@ -20,10 +20,23 @@ import requests
 import logging
 import csv
 import os
+import itertools
 from index import Alignment
-from progressbar import ProgressBar
-from tqdm import tqdm
-pbar = ProgressBar()
+
+
+def set_up_logger(logger_name):
+    logger = logging.getLogger(logger_name)
+    formatter = logging.Formatter("%(message)s")
+    fileHandler = logging.FileHandler(f"./logs/{logger_name}.log")
+    fileHandler.setFormatter(formatter)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(fileHandler)
+
+    return logger
+
+pechas_catalog = set_up_logger("pechas_catalog")
+alignment_catalog =set_up_logger("alignment_catalog")
+err_log = set_up_logger('err')
 
 class LHParser(Alignment):
     start_url = 'https://www.lotsawahouse.org'
@@ -42,16 +55,7 @@ class LHParser(Alignment):
         soup = BeautifulSoup(response.content,'html.parser')
         return soup
     
-    @staticmethod
-    def set_up_logger(logger_name):
-        logger = logging.getLogger(logger_name)
-        formatter = logging.Formatter("%(message)s")
-        fileHandler = logging.FileHandler(f"{logger_name}.log")
-        fileHandler.setFormatter(formatter)
-        logger.setLevel(logging.INFO)
-        logger.addHandler(fileHandler)
-
-        return logger
+    
     
     def parse_home(self,url):
         page = self.make_request(url)
@@ -77,24 +81,56 @@ class LHParser(Alignment):
                 main_name = comp_name.get_text()
                 links_list.append(comp_name['href'])
                 links.update({main_name:links_list})
-        return links 
+        return links  
 
 
     def parse_collection(self,url):
+        has_alignment = None
         collection_page = self.make_request(url)
         self.collection_name = collection_page.select_one('div#content h1').text
         self.collection_description = collection_page.select_one("div#content b").text.strip("\n")
         main_div = collection_page.find('div',{'id':'content'})
         pecha_links = main_div.select('div.index-container ul li>a:first-child')
         for pecha_link in pecha_links:
-            alignment_id=""
-            parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link.get("href"),pecha_link.text)
+            try:
+                print("    "+pecha_link.text)
+                parrallel_pechas,has_alignment,pecha_name = self.parse_page_content(pecha_link.get("href"),pecha_link.text)
+            except Exception as e:
+                err_log.info(f"{pecha_link.get('href')},{e}")
             if has_alignment:
-                alignment_id,alignments = self.create_alignment(parrallel_pechas,pecha_name)
-                tmx_path = self.create_tmx(alignments,pecha_name)
-                publish_repo(Path(f"{self.root_opa_path}/{alignment_id}"),asset_paths=[Path(tmx_path)])
-                self.alignment_catalog.info(f"{alignment_id},{pecha_name},https://github.com/OpenPecha-Data/{alignment_id}")
-    
+                alignment_id,_ = self.create_alignment(parrallel_pechas,pecha_name)
+                #tmx_path = self.create_tmx(alignments,pecha_name)
+                publish_repo(Path(f"{self.root_opa_path}/{alignment_id}"))
+                alignment_catalog.info(f"{alignment_id},{pecha_name},https://github.com/OpenPecha-Data/{alignment_id}")
+                print(f"{pecha_name} ALIGNMENT CREATED")
+                self.update_collection(alignment_id)
+            else:
+                for pecha in parrallel_pechas:
+                    self.update_collection(pecha['pecha_id'])
+
+    def update_collection(self,item_id):
+        collection_yml_path = Path("./logs/collections.yml")
+        if os.path.exists("./logs/collections.yml"):
+            collections_dict = load_yaml(collection_yml_path)
+        else:
+            collections_dict = {}
+
+        if self.collection_name in collections_dict.keys():
+            new_list = collections_dict[self.collection_name]
+            new_list.append(item_id)
+            collections_dict[self.collection_name] = new_list
+        else:
+            collections_dict[self.collection_name] = [item_id]
+        if self.main_collection in collections_dict.keys():
+            new_list = collections_dict[self.main_collection]
+            new_list.append(item_id)
+            collections_dict[self.main_collection]  = new_list
+        else:
+            collections_dict[self.main_collection] = [item_id]
+        dump_yaml(collections_dict,collection_yml_path)
+
+
+        
     def create_tmx(self,alignments,pecha_name):
         tmxObj = Tmx(self.root_opf_path,self.root_tmx_path)
         self._mkdir(Path(self.root_tmx_path))
@@ -123,7 +159,6 @@ class LHParser(Alignment):
             code ="zh"
         else:
             code = "un"
-
         return code
 
     def parse_page_content(self,pecha_link,pecha_name):
@@ -140,19 +175,25 @@ class LHParser(Alignment):
             base_texts.append(base_text)
             languages.append(lang)
             page_urls.append(self.start_url+href)
-
+        #self.test_base_text(base_texts)
         if has_alignment:
-            self.verify_alignmnet(base_texts)
-            
+            has_alignment = self.verify_alignmnet(base_texts,pecha_link)
         parrallel_pechas = self.create_multlingual_opf(base_texts,languages,page_urls,pecha_name)
         return parrallel_pechas,has_alignment,pecha_name
 
+
+    def test_base_text(self,base_texts):
+        for combination in itertools.zip_longest(*base_texts):
+            print(combination)
+
     @staticmethod
-    def verify_alignmnet(base_texts):
+    def verify_alignmnet(base_texts,pecha_link):
         it = iter(base_texts)
         the_len = len(next(it))
         if not all(len(l) == the_len for l in it):
-            raise ValueError('not all lists have same length')
+            err_log.info(f"{pecha_link},in")
+            return False
+        return True
 
     def create_multlingual_opf(self,base_texts:list,langs:list,page_urls:list,pecha_name:str):
         parrallel_pechas = []
@@ -163,14 +204,13 @@ class LHParser(Alignment):
             self.create_readme(lang,pecha_name,pecha_id)
             source_file_path = self.create_source_file(pecha_id,page_url,base_id)
             publish_repo(Path(f"{self.root_opf_path}/{pecha_id}"),asset_paths=[Path(source_file_path)])
-            self.pechas_catalog.info(f"{pecha_id},{pecha_name},https://github.com/OpenPecha-Data/{pecha_id}")
+            pechas_catalog.info(f"{pecha_id},{pecha_name},https://github.com/OpenPecha-Data/{pecha_id}")
             parrallel_pechas.append({
             "pecha_id":pecha_id,
             "base_id":base_id,  
             "annotations":segment_annotaions,
             "lang":lang})
-
-        
+            
         return parrallel_pechas
     
     def create_readme(self,lang,pecha_name,pecha_id):
@@ -208,7 +248,7 @@ class LHParser(Alignment):
         meta = InitialPechaMetadata(
             id=pecha_id,
             source = self.start_url,
-            initial_creation_type=InitialCreationType.input,
+            initial_creation_type=InitialCreationType.web_scrap,
             default_language=lang,
             bases={
                 base_id:{"title":pecha_name,
@@ -216,7 +256,7 @@ class LHParser(Alignment):
                 "order":1}
                     },
             source_metadata={
-                "collection":self.collection_name
+                "collections":[self.collection_name,self.main_collection]
             })
         return meta
 
@@ -342,29 +382,27 @@ class LHParser(Alignment):
         return base_text,has_alignment
 
     def main(self):
-        self.pechas_catalog = self.set_up_logger("pechas_catalog")
-        self.alignment_catalog =self.set_up_logger("alignment_catalog")
-        self.err_log = self.set_up_logger('err')
         translation_page = self.parse_home(self.start_url)
         links = self.get_links(translation_page)
-        bool_try = None
-        for link in tqdm(links):
-            pecha_links = links[link]   
-            for i,pecha_link in enumerate(pecha_links):
-                if i%200 == 0 and i!=0:
-                    shutil.rmtree("./zot_dir/")
-                """ if self.start_url+pecha_link == "https://www.lotsawahouse.org/tibetan-masters/adzom-drukpa/":
-                    bool_try = True
-                else:
-                    bool_try = False
-                if not bool_try:
-                    continue  """
-                try:
+        bool_try = True
+        i=0
+        for link in links:
+            main_title = link
+            self.main_collection = main_title
+            pecha_links = links[link] 
+            """ if pecha_link in err_list:
+                bool_try = True """
+            for pecha_link in pecha_links:
+                if link == "Works of Tibetan Masters":
                     self.parse_collection(self.start_url+pecha_link)
-                except:
-                    self.err_log.info(pecha_link)
-                print(pecha_link)
+                    if i%200 == 0 and i!=0:
+                        shutil.rmtree("./zot_dir/")
                 
+                
+    def get_err_list(self):
+        with open("old_err.log", 'r') as f:
+            err_list = [line for line in f.read().splitlines()]
+        return err_list
 
 def publish_repo(pecha_path, asset_paths=None):
     github_utils.github_publish(
@@ -389,8 +427,9 @@ def publish_repo(pecha_path, asset_paths=None):
         )
 if __name__ == "__main__":
     obj = LHParser()
+    #obj.collection_name = "demo"
     obj.main()
     #obj.parse_collection("https://www.lotsawahouse.org/tibetan-masters/lhundrup-tso/")
-    #obj.parse_page_content("/tibetan-masters/adeu-rinpoche/","test")
+    #obj.parse_page_content("/tibetan-masters/alak-zenkar/swift-rebirth-prayer-for-pewar-rinpoche","test")
     #obj.parse_page_content("https://www.lotsawahouse.org/tibetan-masters/adeu-rinpoche/white-jambhala")
     #obj.parse_collection("https://www.lotsawahouse.org/tibetan-masters/dilgo-khyentse/")

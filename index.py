@@ -82,13 +82,13 @@ class Alignment:
             "type": "translation",
             "pechas":pechas_ids,
             "source_metadata":{
-                
                 "languages":langs,
                 "datatype":"PlainText",
                 "created_at":datetime.now(),
                 "last_modified_at":datetime.now(),
-                "alignment_to_base":alignment_map
+                "collections":[self.collection_name,self.main_collection]
                 },
+            "alignment_to_base":alignment_map
         }
         return metadata
 
