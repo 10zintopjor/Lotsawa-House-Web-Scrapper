@@ -20,7 +20,7 @@ class Alignment:
                 pecha["pecha_id"]:{
                     "type": "origin_type",
                     "relation": "translation",
-                    "language": pecha["lang"],
+                    "lang": pecha["lang"],
                     "base":f"{pecha['base_id']}"
                 }
             }

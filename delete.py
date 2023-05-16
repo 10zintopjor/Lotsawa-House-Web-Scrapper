@@ -7,8 +7,11 @@ from pkg_resources import DEVELOP_DIST
 
 
 def get_ids(path):
-    github_utils.delete_repo(path)
-    print("deleted")
+    try:
+        github_utils.delete_repo(path)
+        print("deleted",path)
+    except:
+        print("unsuccessful",path)
             
 
 def remove_duplicates():
@@ -50,7 +53,7 @@ def check_url():
 
 
 if __name__ == "__main__":
-     with open("logs/pechas_catalog.csv","r") as f1:
+     with open("to_be_deleted.csv","r") as f1:
         obj1 = csv.reader(f1)
         for row1 in obj1:
             get_ids(row1[0])
