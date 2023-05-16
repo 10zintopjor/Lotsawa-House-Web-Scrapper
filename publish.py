@@ -29,17 +29,17 @@ def publish_repo(pecha_path, asset_paths=None):
             print("Error occurred:", str(e))
 
 def publish():
-    bool_try = False
-    with open("./data/logs_v1/alignment_catalog.csv","r") as f1:
+    bool_try = True
+    with open("data/logs_v1/pechas_catalog.csv","r") as f1:
         obj = csv.reader(f1)
         for row in obj:
             id = row[0]
             if bool_try:
-                pecha_path = Path(f"./data/zot_dir_v1/opas/{id}")
+                pecha_path = Path(f"./data/zot_dir_v1/opfs/{id}")
                 publish_repo(pecha_path=pecha_path)
                 print(id)
                 time.sleep(3)
-            if id == "A9E38A703":
+            if id == "A470FDB37":
                 bool_try =True
             
 
