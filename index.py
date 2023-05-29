@@ -61,8 +61,8 @@ class Alignment:
         dump_yaml(alignments,Path(f"{alignment_path}/{base_id}.yml"))
         dump_yaml(meta,Path(f"{alignment_path}/meta.yml"))
         self.create_readme_for_opa(alignment_id,pecha_name,parrallel_pechas) 
-        #logging.info(f"{alignment_id}:{pechaids}")    
-        return alignment_id,alignments
+        logging.info(f"{alignment_id}:{meta['title']}")    
+        return alignment_id
 
     def _mkdir(self,path: Path):
         path.mkdir(parents=True, exist_ok=True)
